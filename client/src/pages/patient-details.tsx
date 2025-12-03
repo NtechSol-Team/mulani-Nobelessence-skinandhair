@@ -1,0 +1,322 @@
+import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useRoute, Link } from "wouter";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { 
+  ArrowLeft, 
+  Phone, 
+  Calendar, 
+  FileText, 
+  Stethoscope,
+  Plus,
+  User
+} from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
+import { useToast } from "@/hooks/use-toast";
+import type { Patient, Visit } from "@shared/schema";
+import { insertVisitSchema } from "@shared/schema";
+import { apiRequest } from "@/lib/queryClient";
+import { format } from "date-fns";
+import { z } from "zod";
+
+const addVisitSchema = z.object({
+  date: z.string(),
+  complaints: z.string().min(1, "Complaints are required"),
+  diagnosis: z.string().min(1, "Diagnosis is required"),
+});
+
+type AddVisitForm = z.infer<typeof addVisitSchema>;
+
+export default function PatientDetails() {
+  const [, params] = useRoute("/patient/:id");
+  const patientId = params?.id;
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+
+  const { data: patient, isLoading: patientLoading } = useQuery<Patient>({
+    queryKey: ["/api/patients", patientId],
+    enabled: !!patientId,
+  });
+
+  const { data: visits = [], isLoading: visitsLoading } = useQuery<Visit[]>({
+    queryKey: ["/api/visits", patientId],
+    enabled: !!patientId,
+  });
+
+  const form = useForm<AddVisitForm>({
+    resolver: zodResolver(addVisitSchema),
+    defaultValues: {
+      date: format(new Date(), "yyyy-MM-dd"),
+      complaints: "",
+      diagnosis: "",
+    },
+  });
+
+  const addVisitMutation = useMutation({
+    mutationFn: async (data: AddVisitForm) => {
+      return await apiRequest("POST", "/api/visits", {
+        patientId,
+        ...data,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/visits", patientId] });
+      toast({
+        title: "Visit Added",
+        description: "New visit has been recorded successfully.",
+      });
+      setIsDialogOpen(false);
+      form.reset({
+        date: format(new Date(), "yyyy-MM-dd"),
+        complaints: "",
+        diagnosis: "",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Failed to Add Visit",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const sortedVisits = [...visits].sort(
+    (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+  );
+
+  if (patientLoading || visitsLoading) {
+    return (
+      <div className="p-6 max-w-4xl mx-auto space-y-6">
+        <Skeleton className="h-8 w-48" />
+        <Skeleton className="h-32 w-full" />
+        <Skeleton className="h-48 w-full" />
+      </div>
+    );
+  }
+
+  if (!patient) {
+    return (
+      <div className="p-6 max-w-4xl mx-auto">
+        <div className="text-center py-12">
+          <User className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+          <h3 className="text-lg font-medium mb-1">Patient Not Found</h3>
+          <p className="text-muted-foreground text-sm mb-4">
+            The patient you're looking for doesn't exist.
+          </p>
+          <Link href="/">
+            <Button variant="outline">
+              <ArrowLeft className="w-4 h-4 mr-2" />
+              Back to Dashboard
+            </Button>
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-6 max-w-4xl mx-auto space-y-6">
+      <div className="flex items-center gap-4">
+        <Link href="/">
+          <Button variant="ghost" size="icon" data-testid="button-back">
+            <ArrowLeft className="w-5 h-5" />
+          </Button>
+        </Link>
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight" data-testid="text-patient-name">
+            {patient.name}
+          </h1>
+          <div className="flex items-center gap-3 text-muted-foreground text-sm">
+            <span className="flex items-center gap-1">
+              <Phone className="w-3 h-3" />
+              {patient.phone}
+            </span>
+            <span className="text-border">|</span>
+            <span className="flex items-center gap-1">
+              <Calendar className="w-3 h-3" />
+              Registered: {format(new Date(patient.registrationDate), "dd MMM yyyy")}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between gap-4 pb-4">
+          <div>
+            <CardTitle className="text-lg">Visit History</CardTitle>
+            <p className="text-sm text-muted-foreground mt-1">
+              {sortedVisits.length} visit{sortedVisits.length !== 1 ? "s" : ""} recorded
+            </p>
+          </div>
+          <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+            <DialogTrigger asChild>
+              <Button data-testid="button-add-visit">
+                <Plus className="w-4 h-4 mr-2" />
+                Add Visit
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-lg">
+              <DialogHeader>
+                <DialogTitle>Add New Visit</DialogTitle>
+              </DialogHeader>
+              <Form {...form}>
+                <form
+                  onSubmit={form.handleSubmit((data) => addVisitMutation.mutate(data))}
+                  className="space-y-4"
+                >
+                  <FormField
+                    control={form.control}
+                    name="date"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Visit Date</FormLabel>
+                        <FormControl>
+                          <Input type="date" {...field} data-testid="input-visit-date" />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="complaints"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Complaints</FormLabel>
+                        <FormControl>
+                          <Textarea
+                            placeholder="Enter patient's complaints..."
+                            className="min-h-[80px] resize-none"
+                            {...field}
+                            data-testid="input-visit-complaints"
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="diagnosis"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Diagnosis</FormLabel>
+                        <FormControl>
+                          <Textarea
+                            placeholder="Enter diagnosis..."
+                            className="min-h-[80px] resize-none"
+                            {...field}
+                            data-testid="input-visit-diagnosis"
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <div className="flex justify-end gap-3 pt-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setIsDialogOpen(false)}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      type="submit"
+                      disabled={addVisitMutation.isPending}
+                      data-testid="button-save-visit"
+                    >
+                      {addVisitMutation.isPending ? "Saving..." : "Save Visit"}
+                    </Button>
+                  </div>
+                </form>
+              </Form>
+            </DialogContent>
+          </Dialog>
+        </CardHeader>
+        <CardContent>
+          {sortedVisits.length === 0 ? (
+            <div className="text-center py-8">
+              <FileText className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
+              <p className="text-muted-foreground">No visits recorded yet</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {sortedVisits.map((visit, index) => (
+                <div
+                  key={visit.id}
+                  className="relative pl-6 pb-6 last:pb-0 border-l-2 border-border last:border-transparent"
+                  data-testid={`card-visit-${visit.id}`}
+                >
+                  <div className="absolute -left-[9px] top-0 w-4 h-4 rounded-full bg-primary border-4 border-background" />
+                  
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <span className="font-medium">
+                        {format(new Date(visit.date), "dd MMM yyyy")}
+                      </span>
+                      <Badge variant="secondary">
+                        {sortedVisits.length - index === 1 ? "1st" : 
+                         sortedVisits.length - index === 2 ? "2nd" :
+                         sortedVisits.length - index === 3 ? "3rd" :
+                         `${sortedVisits.length - index}th`} Visit
+                      </Badge>
+                    </div>
+
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div className="p-3 rounded-lg bg-muted/50">
+                        <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground mb-2">
+                          <FileText className="w-4 h-4" />
+                          Complaints
+                        </div>
+                        <p className="text-sm" data-testid={`text-complaints-${visit.id}`}>
+                          {visit.complaints}
+                        </p>
+                      </div>
+
+                      <div className="p-3 rounded-lg bg-muted/50">
+                        <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground mb-2">
+                          <Stethoscope className="w-4 h-4" />
+                          Diagnosis
+                        </div>
+                        <p className="text-sm" data-testid={`text-diagnosis-${visit.id}`}>
+                          {visit.diagnosis}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
