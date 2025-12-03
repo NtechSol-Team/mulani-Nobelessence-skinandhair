@@ -30,7 +30,7 @@ export default function Dashboard() {
   const todayPatients = patients.filter(
     (p) => p.registrationDate === format(new Date(), "yyyy-MM-dd")
   );
-  const totalRevenue = bills.reduce((sum, bill) => sum + bill.amountPaid, 0);
+  const totalRevenue = bills.reduce((sum, bill) => sum + bill.grandTotal, 0);
 
   return (
     <div className="p-6 max-w-[1600px] mx-auto space-y-6">

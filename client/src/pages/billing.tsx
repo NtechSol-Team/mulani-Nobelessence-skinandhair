@@ -7,13 +7,11 @@ import {
   Search,
   Plus,
   Trash2,
-  User,
-  Phone,
-  Calendar,
-  CreditCard,
   AlertCircle,
   Check,
   FileText,
+  Edit2,
+  Phone,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -34,21 +32,15 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from "@/components/ui/form";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import type {
   Patient,
@@ -58,7 +50,7 @@ import type {
   BillMedicineItem,
   BillTreatmentItem,
 } from "@shared/schema";
-import { apiRequest, queryClient as qc } from "@/lib/queryClient";
+import { apiRequest } from "@/lib/queryClient";
 import { format } from "date-fns";
 import { z } from "zod";
 
@@ -69,12 +61,17 @@ export default function Billing() {
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [isPaymentDialogOpen, setIsPaymentDialogOpen] = useState(false);
   const [selectedBillForPayment, setSelectedBillForPayment] = useState<Bill | null>(null);
-  const [paymentAmount, setPaymentAmount] = useState("");
+  const [paymentDialogAmount, setPaymentDialogAmount] = useState("");
   const [recentBillSearch, setRecentBillSearch] = useState("");
 
   const [selectedTreatments, setSelectedTreatments] = useState<BillTreatmentItem[]>([]);
   const [selectedMedicines, setSelectedMedicines] = useState<BillMedicineItem[]>([]);
   const [amountPaid, setAmountPaid] = useState("");
+  const [billToDelete, setBillToDelete] = useState<Bill | null>(null);
+  const [billToEdit, setBillToEdit] = useState<Bill | null>(null);
+  const [isEditBillDialogOpen, setIsEditBillDialogOpen] = useState(false);
+  const [editingTreatments, setEditingTreatments] = useState<BillTreatmentItem[]>([]);
+  const [editingMedicines, setEditingMedicines] = useState<BillMedicineItem[]>([]);
 
   const { data: patients = [], isLoading: patientsLoading } = useQuery<Patient[]>({
     queryKey: ["/api/patients"],
@@ -150,11 +147,73 @@ export default function Billing() {
       });
       setIsPaymentDialogOpen(false);
       setSelectedBillForPayment(null);
-      setPaymentAmount("");
+      setPaymentDialogAmount("");
     },
     onError: (error: Error) => {
       toast({
         title: "Payment Failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const updateBillMutation = useMutation({
+    mutationFn: async ({ billId, treatments, medicines }: { billId: string; treatments: BillTreatmentItem[]; medicines: BillMedicineItem[] }) => {
+      const treatmentTotal = treatments.reduce((sum, t) => sum + t.price, 0);
+      const medicineTotal = medicines.reduce((sum, m) => sum + m.total, 0);
+      const grandTotal = treatmentTotal + medicineTotal;
+      
+      if (!billToEdit) throw new Error("Bill not found");
+      
+      return await apiRequest("PATCH", `/api/bills/${billId}`, {
+        patientId: billToEdit.patientId,
+        date: billToEdit.date,
+        treatments,
+        medicines,
+        treatmentTotal,
+        medicineTotal,
+        grandTotal,
+        amountPaid: billToEdit.amountPaid,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/bills"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/medicines"] });
+      toast({
+        title: "Bill Updated",
+        description: "Bill has been updated successfully.",
+      });
+      setIsEditBillDialogOpen(false);
+      setBillToEdit(null);
+      setEditingTreatments([]);
+      setEditingMedicines([]);
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Failed to Update Bill",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deleteBillMutation = useMutation({
+    mutationFn: async (id: string) => {
+      return await apiRequest("DELETE", `/api/bills/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/bills"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/medicines"] });
+      toast({
+        title: "Bill Deleted",
+        description: "Bill has been removed successfully.",
+      });
+      setBillToDelete(null);
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Failed to Delete Bill",
         description: error.message,
         variant: "destructive",
       });
@@ -181,6 +240,12 @@ export default function Billing() {
         },
       ]);
     }
+  };
+
+  const updateTreatmentPrice = (index: number, price: number) => {
+    const updated = [...selectedTreatments];
+    updated[index].price = price;
+    setSelectedTreatments(updated);
   };
 
   const removeTreatment = (index: number) => {
@@ -231,6 +296,84 @@ export default function Billing() {
 
   const removeMedicine = (index: number) => {
     setSelectedMedicines(selectedMedicines.filter((_, i) => i !== index));
+  };
+
+  // Edit bill functions
+  const openEditBillDialog = (bill: Bill) => {
+    setBillToEdit(bill);
+    setEditingTreatments([...bill.treatments]);
+    setEditingMedicines([...bill.medicines]);
+    setIsEditBillDialogOpen(true);
+  };
+
+  const addEditingTreatment = (treatmentId: string) => {
+    const treatment = treatments.find((t) => t.id === treatmentId);
+    if (treatment) {
+      setEditingTreatments([
+        ...editingTreatments,
+        {
+          treatmentId: treatment.id,
+          treatmentName: treatment.name,
+          price: treatment.defaultPrice,
+        },
+      ]);
+    }
+  };
+
+  const updateEditingTreatmentPrice = (index: number, price: number) => {
+    const updated = [...editingTreatments];
+    updated[index].price = price;
+    setEditingTreatments(updated);
+  };
+
+  const removeEditingTreatment = (index: number) => {
+    setEditingTreatments(editingTreatments.filter((_, i) => i !== index));
+  };
+
+  const addEditingMedicine = () => {
+    setEditingMedicines([
+      ...editingMedicines,
+      {
+        medicineId: "",
+        medicineName: "",
+        quantity: 1,
+        unitPrice: 0,
+        total: 0,
+      },
+    ]);
+  };
+
+  const updateEditingMedicine = (index: number, medicineId: string) => {
+    const medicine = medicines.find((m) => m.id === medicineId);
+    if (medicine) {
+      const updated = [...editingMedicines];
+      updated[index] = {
+        medicineId: medicine.id,
+        medicineName: medicine.name,
+        quantity: 1,
+        unitPrice: medicine.sellingPrice,
+        total: medicine.sellingPrice,
+      };
+      setEditingMedicines(updated);
+    }
+  };
+
+  const updateEditingMedicineQuantity = (index: number, quantity: number) => {
+    const updated = [...editingMedicines];
+    updated[index].quantity = quantity;
+    updated[index].total = updated[index].unitPrice * quantity;
+    setEditingMedicines(updated);
+  };
+
+  const updateEditingMedicinePrice = (index: number, price: number) => {
+    const updated = [...editingMedicines];
+    updated[index].unitPrice = price;
+    updated[index].total = price * updated[index].quantity;
+    setEditingMedicines(updated);
+  };
+
+  const removeEditingMedicine = (index: number) => {
+    setEditingMedicines(editingMedicines.filter((_, i) => i !== index));
   };
 
   const treatmentTotal = selectedTreatments.reduce((sum, t) => sum + t.price, 0);
@@ -375,7 +518,16 @@ export default function Billing() {
                     >
                       <span className="text-sm font-medium">{treatment.treatmentName}</span>
                       <div className="flex items-center gap-3">
-                        <span className="text-sm">₹{treatment.price}</span>
+                        <Input
+                          type="number"
+                          min="0"
+                          value={treatment.price}
+                          onChange={(e) =>
+                            updateTreatmentPrice(index, parseFloat(e.target.value) || 0)
+                          }
+                          className="h-8 w-24"
+                          data-testid={`input-treatment-price-${index}`}
+                        />
                         <Button
                           variant="ghost"
                           size="icon"
@@ -554,7 +706,7 @@ export default function Billing() {
                     className="p-3 rounded-lg border bg-card hover-elevate cursor-pointer"
                     onClick={() => {
                       setSelectedBillForPayment(bill);
-                      setPaymentAmount("");
+                      setPaymentDialogAmount(bill.amountPaid.toString());
                       setIsPaymentDialogOpen(true);
                     }}
                     data-testid={`card-pending-bill-${bill.id}`}
@@ -623,33 +775,67 @@ export default function Billing() {
                     className="p-3 rounded-lg border bg-card"
                     data-testid={`card-bill-${bill.id}`}
                   >
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="font-medium">{bill.patientName}</p>
-                          <p className="text-sm text-muted-foreground">
-                            {format(new Date(bill.date), "dd MMM yyyy")}
-                          </p>
-                        </div>
-                        <div className="text-right">
-                          <p className="font-medium">₹{bill.grandTotal.toFixed(2)}</p>
-                          {bill.pendingAmount > 0 ? (
-                            <Badge variant="destructive" className="text-xs">
-                              ₹{bill.pendingAmount} pending
-                            </Badge>
-                          ) : (
-                            <Badge variant="secondary" className="text-xs">
-                              Paid
-                            </Badge>
-                          )}
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <p className="font-medium">{bill.patientName}</p>
+                        <p className="text-sm text-muted-foreground">
+                          {format(new Date(bill.date), "dd MMM yyyy")}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="font-medium">₹{bill.grandTotal.toFixed(2)}</p>
+                        {bill.pendingAmount > 0 ? (
+                          <Badge variant="destructive" className="text-xs">
+                            ₹{bill.pendingAmount} pending
+                          </Badge>
+                        ) : (
+                          <Badge variant="secondary" className="text-xs">
+                            Paid
+                          </Badge>
+                        )}
+                        <div className="flex justify-end gap-2 mt-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 text-xs"
+                            onClick={() => {
+                              setSelectedBillForPayment(bill);
+                              setPaymentDialogAmount(bill.amountPaid.toString());
+                              setIsPaymentDialogOpen(true);
+                            }}
+                          >
+                            Edit Payment
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="text-destructive"
+                            onClick={() => setBillToDelete(bill)}
+                            data-testid={`button-delete-bill-${bill.id}`}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
                         </div>
                       </div>
+                    </div>
                       {(bill.treatments.length > 0 || bill.medicines.length > 0) && (
                         <div className="mt-3 space-y-2 text-sm">
                           {bill.treatments.length > 0 && (
                             <div>
-                              <p className="text-xs text-muted-foreground uppercase tracking-wide">
-                                Treatments
-                              </p>
+                              <div className="flex items-center justify-between mb-1">
+                                <p className="text-xs text-muted-foreground uppercase tracking-wide">
+                                  Treatments
+                                </p>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-6 text-xs"
+                                  onClick={() => openEditBillDialog(bill)}
+                                >
+                                  <Edit2 className="w-3 h-3 mr-1" />
+                                  Edit
+                                </Button>
+                              </div>
                               <div className="flex flex-wrap gap-1 mt-1">
                                 {bill.treatments.map((treatment) => (
                                   <Badge key={treatment.treatmentId} variant="outline" className="text-xs">
@@ -661,9 +847,20 @@ export default function Billing() {
                           )}
                           {bill.medicines.length > 0 && (
                             <div>
-                              <p className="text-xs text-muted-foreground uppercase tracking-wide">
-                                Medicines
-                              </p>
+                              <div className="flex items-center justify-between mb-1">
+                                <p className="text-xs text-muted-foreground uppercase tracking-wide">
+                                  Medicines
+                                </p>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-6 text-xs"
+                                  onClick={() => openEditBillDialog(bill)}
+                                >
+                                  <Edit2 className="w-3 h-3 mr-1" />
+                                  Edit
+                                </Button>
+                              </div>
                               <div className="flex flex-wrap gap-1 mt-1">
                                 {bill.medicines.map((medicine) => (
                                   <Badge key={medicine.medicineId} variant="outline" className="text-xs">
@@ -687,7 +884,7 @@ export default function Billing() {
       <Dialog open={isPaymentDialogOpen} onOpenChange={setIsPaymentDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Record Payment</DialogTitle>
+            <DialogTitle>Edit Payment</DialogTitle>
           </DialogHeader>
           {selectedBillForPayment && (
             <div className="space-y-4">
@@ -701,55 +898,286 @@ export default function Billing() {
                   <span>{format(new Date(selectedBillForPayment.date), "dd MMM yyyy")}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Total Amount</span>
+                  <span className="text-muted-foreground">Grand Total</span>
                   <span>₹{selectedBillForPayment.grandTotal.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Already Paid</span>
+                  <span className="text-muted-foreground">Current Paid</span>
                   <span>₹{selectedBillForPayment.amountPaid.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between font-semibold text-destructive border-t pt-2">
-                  <span>Pending</span>
+                  <span>Current Pending</span>
                   <span>₹{selectedBillForPayment.pendingAmount.toFixed(2)}</span>
                 </div>
               </div>
 
               <div>
-                <label className="text-sm font-medium mb-2 block">
-                  Additional Payment Amount
-                </label>
+                <label className="text-sm font-medium mb-2 block">Amount Paid</label>
                 <Input
                   type="number"
-                  placeholder="Enter amount"
-                  value={paymentAmount}
-                  onChange={(e) => setPaymentAmount(e.target.value)}
-                  max={selectedBillForPayment.pendingAmount}
-                  data-testid="input-additional-payment"
+                  min={0}
+                  max={selectedBillForPayment.grandTotal}
+                  value={paymentDialogAmount}
+                  onChange={(e) => setPaymentDialogAmount(e.target.value)}
+                  data-testid="input-edit-amount-paid"
                 />
+                <p className="text-xs text-muted-foreground mt-1">
+                  Set the total amount paid for this bill (0 to ₹
+                  {selectedBillForPayment.grandTotal.toFixed(2)}).
+                </p>
               </div>
 
               <div className="flex justify-end gap-3">
-                <Button variant="outline" onClick={() => setIsPaymentDialogOpen(false)}>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setIsPaymentDialogOpen(false);
+                    setPaymentDialogAmount("");
+                  }}
+                >
                   Cancel
                 </Button>
                 <Button
-                  disabled={!paymentAmount || parseFloat(paymentAmount) <= 0 || adjustPaymentMutation.isPending}
+                  disabled={
+                    adjustPaymentMutation.isPending ||
+                    !paymentDialogAmount ||
+                    isNaN(parseFloat(paymentDialogAmount))
+                  }
                   onClick={() => {
-                    const amount = selectedBillForPayment.amountPaid + parseFloat(paymentAmount);
+                    const amount = parseFloat(paymentDialogAmount || "0");
+                    const safeAmount = Math.max(
+                      0,
+                      Math.min(amount, selectedBillForPayment.grandTotal),
+                    );
                     adjustPaymentMutation.mutate({
                       billId: selectedBillForPayment.id,
-                      amount,
+                      amount: safeAmount,
                     });
                   }}
-                  data-testid="button-confirm-payment"
+                  data-testid="button-confirm-edit-payment"
                 >
-                  {adjustPaymentMutation.isPending ? "Processing..." : "Confirm Payment"}
+                  {adjustPaymentMutation.isPending ? "Updating..." : "Update Payment"}
                 </Button>
               </div>
             </div>
           )}
         </DialogContent>
       </Dialog>
+
+      <Dialog open={isEditBillDialogOpen} onOpenChange={setIsEditBillDialogOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Edit Bill - {billToEdit?.patientName}</DialogTitle>
+          </DialogHeader>
+          {billToEdit && (
+            <div className="space-y-6">
+              <div className="border-t pt-4">
+                <div className="flex items-center justify-between mb-3">
+                  <label className="text-sm font-medium">Treatments</label>
+                  <Select onValueChange={addEditingTreatment}>
+                    <SelectTrigger className="w-48">
+                      <SelectValue placeholder="Add treatment" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {treatments.map((treatment) => (
+                        <SelectItem key={treatment.id} value={treatment.id}>
+                          {treatment.name} - ₹{treatment.defaultPrice}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {editingTreatments.length === 0 ? (
+                  <div className="text-sm text-muted-foreground text-center py-4 bg-muted/30 rounded-lg">
+                    No treatments added
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {editingTreatments.map((treatment, index) => (
+                      <div
+                        key={index}
+                        className="flex items-center justify-between p-3 bg-muted/30 rounded-lg"
+                      >
+                        <span className="text-sm font-medium">{treatment.treatmentName}</span>
+                        <div className="flex items-center gap-3">
+                          <Input
+                            type="number"
+                            min="0"
+                            value={treatment.price}
+                            onChange={(e) =>
+                              updateEditingTreatmentPrice(index, parseFloat(e.target.value) || 0)
+                            }
+                            className="h-8 w-24"
+                          />
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-destructive"
+                            onClick={() => removeEditingTreatment(index)}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="border-t pt-4">
+                <div className="flex items-center justify-between mb-3">
+                  <label className="text-sm font-medium">Medicines</label>
+                  <Button variant="outline" size="sm" onClick={addEditingMedicine}>
+                    <Plus className="w-4 h-4 mr-1" />
+                    Add Medicine
+                  </Button>
+                </div>
+                {editingMedicines.length === 0 ? (
+                  <div className="text-sm text-muted-foreground text-center py-4 bg-muted/30 rounded-lg">
+                    No medicines added
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {editingMedicines.map((med, index) => (
+                      <div
+                        key={index}
+                        className="p-3 bg-muted/30 rounded-lg space-y-3"
+                      >
+                        <div className="flex items-center gap-2">
+                          <Select
+                            value={med.medicineId}
+                            onValueChange={(value) => updateEditingMedicine(index, value)}
+                          >
+                            <SelectTrigger className="flex-1">
+                              <SelectValue placeholder="Select medicine" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {medicines.map((medicine) => (
+                                <SelectItem
+                                  key={medicine.id}
+                                  value={medicine.id}
+                                  disabled={medicine.quantity === 0}
+                                >
+                                  {medicine.name} (Stock: {medicine.quantity})
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-9 w-9 text-destructive shrink-0"
+                            onClick={() => removeEditingMedicine(index)}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
+                        {med.medicineId && (
+                          <div className="grid grid-cols-3 gap-2">
+                            <div>
+                              <label className="text-xs text-muted-foreground">Qty</label>
+                              <Input
+                                type="number"
+                                min="1"
+                                value={med.quantity}
+                                onChange={(e) =>
+                                  updateEditingMedicineQuantity(index, parseInt(e.target.value) || 1)
+                                }
+                                className="h-8"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs text-muted-foreground">Price</label>
+                              <Input
+                                type="number"
+                                min="0"
+                                value={med.unitPrice}
+                                onChange={(e) =>
+                                  updateEditingMedicinePrice(index, parseFloat(e.target.value) || 0)
+                                }
+                                className="h-8"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs text-muted-foreground">Total</label>
+                              <div className="h-8 flex items-center font-medium text-sm">
+                                ₹{med.total.toFixed(2)}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="border-t pt-4 space-y-3">
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Treatment Total</span>
+                  <span>₹{editingTreatments.reduce((sum, t) => sum + t.price, 0).toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Medicine Total</span>
+                  <span>₹{editingMedicines.reduce((sum, m) => sum + m.total, 0).toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between font-semibold text-lg border-t pt-3">
+                  <span>Grand Total</span>
+                  <span>
+                    ₹
+                    {(
+                      editingTreatments.reduce((sum, t) => sum + t.price, 0) +
+                      editingMedicines.reduce((sum, m) => sum + m.total, 0)
+                    ).toFixed(2)}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-3">
+                <Button variant="outline" onClick={() => setIsEditBillDialogOpen(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  disabled={updateBillMutation.isPending}
+                  onClick={() => {
+                    if (billToEdit) {
+                      updateBillMutation.mutate({
+                        billId: billToEdit.id,
+                        treatments: editingTreatments,
+                        medicines: editingMedicines,
+                      });
+                    }
+                  }}
+                >
+                  {updateBillMutation.isPending ? "Updating..." : "Update Bill"}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={!!billToDelete} onOpenChange={() => setBillToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Bill</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete this bill for "
+              {billToDelete?.patientName}"? This will also restore the medicine stock for this
+              bill. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground"
+              onClick={() => billToDelete && deleteBillMutation.mutate(billToDelete.id)}
+            >
+              {deleteBillMutation.isPending ? "Deleting..." : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

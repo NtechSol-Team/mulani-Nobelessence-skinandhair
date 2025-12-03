@@ -67,7 +67,7 @@ export default function Reports() {
     isWithinInterval(new Date(e.date), { start: monthStart, end: monthEnd })
   );
 
-  const thisMonthRevenue = thisMonthBills.reduce((sum, b) => sum + b.amountPaid, 0);
+  const thisMonthRevenue = thisMonthBills.reduce((sum, b) => sum + b.grandTotal, 0);
   const thisMonthTreatmentRevenue = thisMonthBills.reduce(
     (sum, b) => sum + b.treatmentTotal,
     0
@@ -112,7 +112,7 @@ export default function Reports() {
       isWithinInterval(new Date(e.date), { start, end })
     );
 
-    const revenue = monthBills.reduce((sum, b) => sum + b.amountPaid, 0);
+    const revenue = monthBills.reduce((sum, b) => sum + b.grandTotal, 0);
     const expenseTotal = monthExpenses.reduce((sum, e) => sum + e.amount, 0);
 
     return {

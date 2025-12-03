@@ -60,7 +60,9 @@ export interface IStorage {
   getBills(): Promise<Bill[]>;
   getBill(id: string): Promise<Bill | undefined>;
   createBill(bill: InsertBill, patientName: string): Promise<Bill>;
+  updateBill(id: string, bill: InsertBill, patientName: string): Promise<Bill | undefined>;
   updateBillPayment(id: string, amountPaid: number): Promise<Bill | undefined>;
+  deleteBill(id: string): Promise<boolean>;
   
   // Expenses
   getExpenses(): Promise<Expense[]>;
@@ -715,71 +717,120 @@ export class PostgresStorage implements IStorage {
 
   async createBill(insertBill: InsertBill, patientName: string): Promise<Bill> {
     await this.waitForReady();
-    const patientIdValue = this.convertId("patients", insertBill.patientId);
+    try {
+      const patientIdValue = this.convertId("patients", insertBill.patientId);
+      const pendingAmount = Math.max(0, insertBill.grandTotal - insertBill.amountPaid);
+      const useNumericId = this.usesNumericId("bills");
+      const query = useNumericId
+        ? `INSERT INTO bills (
+          patient_id,
+          patient_name,
+          date,
+          treatments,
+          medicines,
+          treatment_total,
+          medicine_total,
+          grand_total,
+          amount_paid,
+          pending_amount
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        RETURNING id, patient_id, patient_name, date, treatments, medicines,
+                  treatment_total, medicine_total, grand_total, amount_paid, pending_amount`
+        : `INSERT INTO bills (
+          id,
+          patient_id,
+          patient_name,
+          date,
+          treatments,
+          medicines,
+          treatment_total,
+          medicine_total,
+          grand_total,
+          amount_paid,
+          pending_amount
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        RETURNING id, patient_id, patient_name, date, treatments, medicines,
+                  treatment_total, medicine_total, grand_total, amount_paid, pending_amount`;
+      const params = useNumericId
+        ? [
+            patientIdValue,
+            patientName,
+            insertBill.date,
+            JSON.stringify(insertBill.treatments || []),
+            JSON.stringify(insertBill.medicines || []),
+            insertBill.treatmentTotal,
+            insertBill.medicineTotal,
+            insertBill.grandTotal,
+            insertBill.amountPaid,
+            pendingAmount,
+          ]
+        : [
+            randomUUID(),
+            patientIdValue,
+            patientName,
+            insertBill.date,
+            JSON.stringify(insertBill.treatments || []),
+            JSON.stringify(insertBill.medicines || []),
+            insertBill.treatmentTotal,
+            insertBill.medicineTotal,
+            insertBill.grandTotal,
+            insertBill.amountPaid,
+            pendingAmount,
+          ];
+      const { rows } = await pool.query<DbBillRow>(query, params);
+      if (!rows[0]) {
+        throw new Error("Failed to create bill - no rows returned");
+      }
+      const bill = mapBill(rows[0]);
+      this.cache.invalidate("bills");
+      this.cache.invalidate("bill:");
+      return bill;
+    } catch (error) {
+      console.error("Error in createBill:", error);
+      throw error;
+    }
+  }
+
+  async updateBill(id: string, insertBill: InsertBill, patientName: string): Promise<Bill | undefined> {
+    await this.waitForReady();
+    const dbId = this.convertId("bills", id);
     const pendingAmount = Math.max(0, insertBill.grandTotal - insertBill.amountPaid);
-    const useNumericId = this.usesNumericId("bills");
-    const query = useNumericId
-      ? `INSERT INTO bills (
-        patient_id,
-        patient_name,
-        date,
-        treatments,
-        medicines,
-        treatment_total,
-        medicine_total,
-        grand_total,
-        amount_paid,
-        pending_amount
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-      RETURNING id, patient_id, patient_name, date, treatments, medicines,
-                treatment_total, medicine_total, grand_total, amount_paid, pending_amount`
-      : `INSERT INTO bills (
-        id,
-        patient_id,
-        patient_name,
-        date,
-        treatments,
-        medicines,
-        treatment_total,
-        medicine_total,
-        grand_total,
-        amount_paid,
-        pending_amount
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-      RETURNING id, patient_id, patient_name, date, treatments, medicines,
-                treatment_total, medicine_total, grand_total, amount_paid, pending_amount`;
-    const params = useNumericId
-      ? [
-          patientIdValue,
-          patientName,
-          insertBill.date,
-          JSON.stringify(insertBill.treatments),
-          JSON.stringify(insertBill.medicines),
-          insertBill.treatmentTotal,
-          insertBill.medicineTotal,
-          insertBill.grandTotal,
-          insertBill.amountPaid,
-          pendingAmount,
-        ]
-      : [
-          randomUUID(),
-          patientIdValue,
-          patientName,
-          insertBill.date,
-          JSON.stringify(insertBill.treatments),
-          JSON.stringify(insertBill.medicines),
-          insertBill.treatmentTotal,
-          insertBill.medicineTotal,
-          insertBill.grandTotal,
-          insertBill.amountPaid,
-          pendingAmount,
-        ];
-    const { rows } = await pool.query<DbBillRow>(query, params);
-    const bill = mapBill(rows[0]);
-    this.cache.invalidate("bills");
-    this.cache.invalidate("bill:");
+    const { rows } = await pool.query<DbBillRow>(
+      `UPDATE bills
+       SET patient_id = $2,
+           patient_name = $3,
+           date = $4,
+           treatments = $5,
+           medicines = $6,
+           treatment_total = $7,
+           medicine_total = $8,
+           grand_total = $9,
+           amount_paid = $10,
+           pending_amount = $11
+       WHERE id = $1
+       RETURNING id, patient_id, patient_name, date, treatments, medicines,
+                 treatment_total, medicine_total, grand_total, amount_paid, pending_amount`,
+      [
+        dbId,
+        this.convertId("patients", insertBill.patientId),
+        patientName,
+        insertBill.date,
+        JSON.stringify(insertBill.treatments),
+        JSON.stringify(insertBill.medicines),
+        insertBill.treatmentTotal,
+        insertBill.medicineTotal,
+        insertBill.grandTotal,
+        insertBill.amountPaid,
+        pendingAmount,
+      ]
+    );
+    const bill = rows[0] ? mapBill(rows[0]) : undefined;
+    if (bill) {
+      this.cache.invalidate("bills");
+      this.cache.invalidate(`bill:${bill.id}`);
+    }
     return bill;
   }
 
@@ -801,6 +852,18 @@ export class PostgresStorage implements IStorage {
       this.cache.invalidate(`bill:${bill.id}`);
     }
     return bill;
+  }
+
+  async deleteBill(id: string): Promise<boolean> {
+    await this.waitForReady();
+    const dbId = this.convertId("bills", id);
+    const result = await pool.query("DELETE FROM bills WHERE id = $1", [dbId]);
+    const success = (result.rowCount ?? 0) > 0;
+    if (success) {
+      this.cache.invalidate("bills");
+      this.cache.invalidate(`bill:${normalizeId(id)}`);
+    }
+    return success;
   }
 
   // Expenses
