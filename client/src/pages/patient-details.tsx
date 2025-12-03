@@ -3,14 +3,15 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRoute, Link } from "wouter";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { 
-  ArrowLeft, 
-  Phone, 
-  Calendar, 
-  FileText, 
+import {
+  ArrowLeft,
+  Phone,
+  Calendar,
+  FileText,
   Stethoscope,
   Plus,
-  User
+  User,
+  Pencil,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -54,6 +55,8 @@ export default function PatientDetails() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [editingVisit, setEditingVisit] = useState<Visit | null>(null);
 
   const { data: patient, isLoading: patientLoading } = useQuery<Patient>({
     queryKey: ["/api/patients", patientId],
@@ -66,6 +69,15 @@ export default function PatientDetails() {
   });
 
   const form = useForm<AddVisitForm>({
+    resolver: zodResolver(addVisitSchema),
+    defaultValues: {
+      date: format(new Date(), "yyyy-MM-dd"),
+      complaints: "",
+      diagnosis: "",
+    },
+  });
+
+  const editForm = useForm<AddVisitForm>({
     resolver: zodResolver(addVisitSchema),
     defaultValues: {
       date: format(new Date(), "yyyy-MM-dd"),
@@ -102,6 +114,48 @@ export default function PatientDetails() {
       });
     },
   });
+
+  const updateVisitMutation = useMutation({
+    mutationFn: async (data: AddVisitForm) => {
+      if (!patientId || !editingVisit) throw new Error("No visit selected");
+      return await apiRequest("PATCH", `/api/visits/${editingVisit.id}`, {
+        patientId,
+        ...data,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/visits", patientId] });
+      toast({
+        title: "Visit Updated",
+        description: "Visit details have been updated successfully.",
+      });
+      handleEditDialogChange(false);
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Failed to Update Visit",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const openEditDialog = (visit: Visit) => {
+    setEditingVisit(visit);
+    editForm.reset({
+      date: visit.date,
+      complaints: visit.complaints,
+      diagnosis: visit.diagnosis,
+    });
+    setIsEditDialogOpen(true);
+  };
+
+  const handleEditDialogChange = (open: boolean) => {
+    setIsEditDialogOpen(open);
+    if (!open) {
+      setEditingVisit(null);
+    }
+  };
 
   const sortedVisits = [...visits].sort(
     (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
@@ -277,16 +331,28 @@ export default function PatientDetails() {
                   <div className="absolute -left-[9px] top-0 w-4 h-4 rounded-full bg-primary border-4 border-background" />
                   
                   <div className="space-y-3">
-                    <div className="flex items-center gap-3 flex-wrap">
-                      <span className="font-medium">
-                        {format(new Date(visit.date), "dd MMM yyyy")}
-                      </span>
-                      <Badge variant="secondary">
-                        {sortedVisits.length - index === 1 ? "1st" : 
-                         sortedVisits.length - index === 2 ? "2nd" :
-                         sortedVisits.length - index === 3 ? "3rd" :
-                         `${sortedVisits.length - index}th`} Visit
-                      </Badge>
+                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <span className="font-medium">
+                          {format(new Date(visit.date), "dd MMM yyyy")}
+                        </span>
+                        <Badge variant="secondary">
+                          {sortedVisits.length - index === 1 ? "1st" :
+                           sortedVisits.length - index === 2 ? "2nd" :
+                           sortedVisits.length - index === 3 ? "3rd" :
+                           `${sortedVisits.length - index}th`} Visit
+                        </Badge>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8"
+                        onClick={() => openEditDialog(visit)}
+                        data-testid={`button-edit-visit-${visit.id}`}
+                      >
+                        <Pencil className="w-4 h-4 mr-1" />
+                        Edit
+                      </Button>
                     </div>
 
                     <div className="grid gap-4 md:grid-cols-2">
@@ -317,6 +383,93 @@ export default function PatientDetails() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={isEditDialogOpen} onOpenChange={handleEditDialogChange}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Edit Visit</DialogTitle>
+          </DialogHeader>
+          {editingVisit ? (
+            <Form {...editForm}>
+              <form
+                onSubmit={editForm.handleSubmit((data) => updateVisitMutation.mutate(data))}
+                className="space-y-4"
+              >
+                <FormField
+                  control={editForm.control}
+                  name="date"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Visit Date</FormLabel>
+                      <FormControl>
+                        <Input type="date" {...field} data-testid="input-edit-visit-date" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={editForm.control}
+                  name="complaints"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Complaints</FormLabel>
+                      <FormControl>
+                        <Textarea
+                          placeholder="Update patient's complaints..."
+                          className="min-h-[80px] resize-none"
+                          {...field}
+                          data-testid="input-edit-visit-complaints"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={editForm.control}
+                  name="diagnosis"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Diagnosis</FormLabel>
+                      <FormControl>
+                        <Textarea
+                          placeholder="Update diagnosis..."
+                          className="min-h-[80px] resize-none"
+                          {...field}
+                          data-testid="input-edit-visit-diagnosis"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <div className="flex justify-end gap-3 pt-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => handleEditDialogChange(false)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="submit"
+                    disabled={updateVisitMutation.isPending}
+                    data-testid="button-save-visit-edit"
+                  >
+                    {updateVisitMutation.isPending ? "Saving..." : "Save Changes"}
+                  </Button>
+                </div>
+              </form>
+            </Form>
+          ) : (
+            <p className="text-sm text-muted-foreground">Select a visit to edit.</p>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

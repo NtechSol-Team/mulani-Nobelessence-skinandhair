@@ -85,6 +85,22 @@ export async function registerRoutes(
     }
   });
 
+  app.patch("/api/visits/:id", async (req, res) => {
+    try {
+      const validated = insertVisitSchema.parse(req.body);
+      const visit = await storage.updateVisit(req.params.id, validated);
+      if (!visit) {
+        return res.status(404).json({ error: "Visit not found" });
+      }
+      res.json(visit);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors });
+      }
+      res.status(500).json({ error: "Failed to update visit" });
+    }
+  });
+
   // ==================== MEDICINES ====================
   
   app.get("/api/medicines", async (req, res) => {

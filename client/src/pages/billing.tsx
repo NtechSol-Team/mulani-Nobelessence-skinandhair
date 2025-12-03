@@ -70,6 +70,7 @@ export default function Billing() {
   const [isPaymentDialogOpen, setIsPaymentDialogOpen] = useState(false);
   const [selectedBillForPayment, setSelectedBillForPayment] = useState<Bill | null>(null);
   const [paymentAmount, setPaymentAmount] = useState("");
+  const [recentBillSearch, setRecentBillSearch] = useState("");
 
   const [selectedTreatments, setSelectedTreatments] = useState<BillTreatmentItem[]>([]);
   const [selectedMedicines, setSelectedMedicines] = useState<BillMedicineItem[]>([]);
@@ -239,6 +240,12 @@ export default function Billing() {
   const pendingAmount = grandTotal - paid;
 
   const pendingBills = bills.filter((b) => b.pendingAmount > 0);
+  const recentBills = [...bills]
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+    .filter((bill) =>
+      bill.patientName.toLowerCase().includes(recentBillSearch.toLowerCase().trim())
+    )
+    .slice(0, 10);
 
   return (
     <div className="p-6 max-w-[1600px] mx-auto space-y-6">
@@ -579,6 +586,17 @@ export default function Billing() {
               <FileText className="w-5 h-5 text-primary" />
               Recent Bills
             </CardTitle>
+            {bills.length > 0 && (
+              <div className="mt-2">
+                <Input
+                  placeholder="Search patient..."
+                  value={recentBillSearch}
+                  onChange={(e) => setRecentBillSearch(e.target.value)}
+                  className="h-9"
+                  data-testid="input-recent-bill-search"
+                />
+              </div>
+            )}
           </CardHeader>
           <CardContent>
             {billsLoading ? (
@@ -592,17 +610,19 @@ export default function Billing() {
                 <Receipt className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
                 <p className="text-muted-foreground">No bills created yet</p>
               </div>
+            ) : recentBills.length === 0 ? (
+              <div className="text-center py-8">
+                <Search className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
+                <p className="text-muted-foreground">No bills match that name</p>
+              </div>
             ) : (
               <div className="space-y-2 max-h-80 overflow-y-auto">
-                {[...bills]
-                  .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-                  .slice(0, 10)
-                  .map((bill) => (
-                    <div
-                      key={bill.id}
-                      className="p-3 rounded-lg border bg-card"
-                      data-testid={`card-bill-${bill.id}`}
-                    >
+                {recentBills.map((bill) => (
+                  <div
+                    key={bill.id}
+                    className="p-3 rounded-lg border bg-card"
+                    data-testid={`card-bill-${bill.id}`}
+                  >
                       <div className="flex items-center justify-between">
                         <div>
                           <p className="font-medium">{bill.patientName}</p>
@@ -623,6 +643,39 @@ export default function Billing() {
                           )}
                         </div>
                       </div>
+                      {(bill.treatments.length > 0 || bill.medicines.length > 0) && (
+                        <div className="mt-3 space-y-2 text-sm">
+                          {bill.treatments.length > 0 && (
+                            <div>
+                              <p className="text-xs text-muted-foreground uppercase tracking-wide">
+                                Treatments
+                              </p>
+                              <div className="flex flex-wrap gap-1 mt-1">
+                                {bill.treatments.map((treatment) => (
+                                  <Badge key={treatment.treatmentId} variant="outline" className="text-xs">
+                                    {treatment.treatmentName} · ₹{treatment.price.toFixed(2)}
+                                  </Badge>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {bill.medicines.length > 0 && (
+                            <div>
+                              <p className="text-xs text-muted-foreground uppercase tracking-wide">
+                                Medicines
+                              </p>
+                              <div className="flex flex-wrap gap-1 mt-1">
+                                {bill.medicines.map((medicine) => (
+                                  <Badge key={medicine.medicineId} variant="outline" className="text-xs">
+                                    {medicine.medicineName} ×{medicine.quantity} · ₹
+                                    {medicine.total.toFixed(2)}
+                                  </Badge>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   ))}
               </div>
