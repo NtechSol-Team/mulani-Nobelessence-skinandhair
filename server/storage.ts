@@ -13,9 +13,11 @@ import {
   type InsertExpense,
   type BillTreatmentItem,
   type BillMedicineItem,
+  type User,
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 import { Pool } from "pg";
+import * as bcrypt from "bcrypt";
 
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) {
@@ -72,7 +74,19 @@ export interface IStorage {
   createExpense(expense: InsertExpense): Promise<Expense>;
   updateExpense(id: string, expense: InsertExpense): Promise<Expense | undefined>;
   deleteExpense(id: string): Promise<boolean>;
+  
+  // Users/Auth
+  createUser(username: string, password: string): Promise<User>;
+  getUserByUsername(username: string): Promise<(User & { passwordHash: string }) | undefined>;
+  verifyPassword(password: string, hash: string): Promise<boolean>;
 }
+
+type DbUserRow = {
+  id: string | number;
+  username: string;
+  password_hash: string;
+  created_at: string;
+};
 
 type DbPatientRow = {
   id: string | number;
@@ -127,6 +141,13 @@ type DbExpenseRow = {
 };
 
 const createTableStatements = [
+  `CREATE TABLE IF NOT EXISTS users (
+    id BIGSERIAL PRIMARY KEY,
+    username TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  )`,
+  `CREATE INDEX IF NOT EXISTS users_username_idx ON users(username)`,
   `CREATE TABLE IF NOT EXISTS patients (
     id BIGSERIAL PRIMARY KEY,
     name TEXT NOT NULL,
@@ -241,6 +262,12 @@ async function detectIdModes(): Promise<Record<EntityTable, IdMode>> {
 }
 
 const normalizeId = (value: string | number): string => value.toString();
+
+const mapUser = (row: DbUserRow): User => ({
+  id: normalizeId(row.id),
+  username: row.username,
+  createdAt: row.created_at,
+});
 
 const mapPatient = (row: DbPatientRow): Patient => ({
   id: normalizeId(row.id),
@@ -1114,6 +1141,38 @@ export class PostgresStorage implements IStorage {
     );
     const data = rows.map(mapExpense);
     return { data, total };
+  }
+
+  // Users/Auth
+  async createUser(username: string, password: string): Promise<User> {
+    await this.waitForReady();
+    const passwordHash = await bcrypt.hash(password, 10);
+    const { rows } = await pool.query<DbUserRow>(
+      "INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING id, username, created_at",
+      [username, passwordHash]
+    );
+    const user = rows[0];
+    if (!user) throw new Error("Failed to create user");
+    this.cache.invalidate("users");
+    return mapUser(user);
+  }
+
+  async getUserByUsername(username: string): Promise<(User & { passwordHash: string }) | undefined> {
+    await this.waitForReady();
+    const { rows } = await pool.query<DbUserRow>(
+      "SELECT id, username, password_hash, created_at FROM users WHERE username = $1",
+      [username]
+    );
+    const user = rows[0];
+    if (!user) return undefined;
+    return {
+      ...mapUser(user),
+      passwordHash: user.password_hash,
+    };
+  }
+
+  async verifyPassword(password: string, hash: string): Promise<boolean> {
+    return bcrypt.compare(password, hash);
   }
 }
 

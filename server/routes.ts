@@ -10,6 +10,8 @@ import {
   insertExpenseSchema,
   paymentAdjustmentSchema,
   paginationSchema,
+  registerSchema,
+  loginSchema,
 } from "@shared/schema";
 import { z } from "zod";
 
@@ -17,6 +19,74 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  // ==================== AUTH ====================
+  
+  // User registration disabled - only backend/developer can create users
+  app.post("/api/auth/register", async (req, res) => {
+    res.status(403).json({ error: "User registration is disabled. Contact administrator to create an account." });
+  });
+
+  app.post("/api/auth/login", async (req, res) => {
+    try {
+      const { username, password } = loginSchema.parse(req.body);
+      
+      const user = await storage.getUserByUsername(username);
+      if (!user) {
+        return res.status(401).json({ error: "Invalid credentials" });
+      }
+      
+      const valid = await storage.verifyPassword(password, user.passwordHash);
+      if (!valid) {
+        return res.status(401).json({ error: "Invalid credentials" });
+      }
+      
+      // Create session
+      req.session.regenerate((err) => {
+        if (err) {
+          console.error("Session regenerate error:", err);
+          return res.status(500).json({ error: "Failed to create session" });
+        }
+        
+        req.session.userId = user.id;
+        req.session.username = user.username;
+        req.session.save((err) => {
+          if (err) {
+            console.error("Session save error:", err);
+            return res.status(500).json({ error: "Failed to save session" });
+          }
+          res.json({ user });
+        });
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors });
+      }
+      console.error("Login error:", error);
+      res.status(500).json({ error: "Failed to login" });
+    }
+  });
+
+  app.post("/api/auth/logout", (req, res) => {
+    req.session.destroy((err) => {
+      if (err) {
+        return res.status(500).json({ error: "Failed to logout" });
+      }
+      res.json({ message: "Logged out successfully" });
+    });
+  });
+
+  app.get("/api/auth/me", (req, res) => {
+    if (!req.session?.userId) {
+      return res.status(401).json({ error: "Not authenticated" });
+    }
+    res.json({ 
+      user: { 
+        id: req.session.userId, 
+        username: req.session.username 
+      } 
+    });
+  });
+
   // ==================== PATIENTS ====================
   
   app.get("/api/patients", async (req, res) => {
