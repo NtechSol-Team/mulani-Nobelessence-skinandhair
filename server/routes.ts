@@ -40,23 +40,33 @@ export async function registerRoutes(
         return res.status(401).json({ error: "Invalid credentials" });
       }
       
-      // Create session
-      req.session.regenerate((err) => {
-        if (err) {
-          console.error("Session regenerate error:", err);
-          return res.status(500).json({ error: "Failed to create session" });
-        }
-        
-        req.session.userId = user.id;
-        req.session.username = user.username;
+      // Create session using promises to avoid nested callback hell
+      await new Promise<void>((resolve, reject) => {
+        req.session.regenerate((err) => {
+          if (err) {
+            console.error("Session regenerate error:", err);
+            reject(err);
+          } else {
+            resolve();
+          }
+        });
+      });
+
+      req.session.userId = user.id;
+      req.session.username = user.username;
+
+      await new Promise<void>((resolve, reject) => {
         req.session.save((err) => {
           if (err) {
             console.error("Session save error:", err);
-            return res.status(500).json({ error: "Failed to save session" });
+            reject(err);
+          } else {
+            resolve();
           }
-          res.json({ user });
         });
       });
+
+      res.json({ user });
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: error.errors });
@@ -69,8 +79,11 @@ export async function registerRoutes(
   app.post("/api/auth/logout", (req, res) => {
     req.session.destroy((err) => {
       if (err) {
+        console.error("Session destroy error:", err);
         return res.status(500).json({ error: "Failed to logout" });
       }
+      // Clear session cookie
+      res.clearCookie("connect.sid");
       res.json({ message: "Logged out successfully" });
     });
   });
