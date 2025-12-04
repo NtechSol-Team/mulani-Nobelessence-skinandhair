@@ -10,10 +10,26 @@ export function serveStatic(app: Express) {
     );
   }
 
-  app.use(express.static(distPath));
+  // Serve static files with long-term caching for hashed assets.
+  // index.html should not be aggressively cached so client sees updates.
+  app.use(
+    express.static(distPath, {
+      index: false,
+      // Default maxAge for static assets (set long for fingerprinted files)
+      maxAge: "1y",
+      setHeaders(res, filePath) {
+        // Do not cache HTML (index.html) — ensure clients revalidate
+        if (filePath.endsWith(".html")) {
+          res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+        }
+        // Let other static assets use the default long cache
+      },
+    }),
+  );
 
-  // fall through to index.html if the file doesn't exist
+  // fall through to index.html for client-side routing
   app.use("*", (_req, res) => {
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     res.sendFile(path.resolve(distPath, "index.html"));
   });
 }

@@ -191,7 +191,9 @@ export interface MedicineReport {
 
 // Pagination Schema
 export const paginationSchema = z.object({
-  limit: z.coerce.number().int().positive().max(100).default(50),
+  // Increase default and maximum limits to allow larger page sizes when needed.
+  // Be cautious: very large limits can increase DB load; use sensible bounds for your workload.
+  limit: z.coerce.number().int().positive().max(1000).default(1000),
   offset: z.coerce.number().int().nonnegative().default(0),
 });
 

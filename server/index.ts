@@ -1,5 +1,6 @@
 import express, { type Request, Response, NextFunction } from "express";
 import cors from "cors";
+import compression from "compression";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
@@ -10,12 +11,15 @@ const app = express();
 // When running behind a proxy (e.g. Render, Heroku), enable trust proxy
 // so Express knows the original request protocol (https) and cookies
 // with `secure: true` will be handled correctly.
-if (process.env.NODE_ENV === "production") {
+  if (process.env.NODE_ENV === "production") {
   app.set("trust proxy", 1);
   if (!process.env.SESSION_SECRET) {
     console.warn("SESSION_SECRET is not set in production - please set it in your environment.");
   }
 }
+
+// Enable gzip compression for responses to reduce transfer size
+app.use(compression());
 const httpServer = createServer(app);
 
 // Session middleware removed — authentication/login has been removed intentionally.
