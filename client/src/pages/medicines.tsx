@@ -53,6 +53,7 @@ import { useToast } from "@/hooks/use-toast";
 import type { Medicine } from "@shared/schema";
 import { insertMedicineSchema } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
+import { extractPaginatedData } from "@/lib/utils";
 import { z } from "zod";
 
 const medicineFormSchema = insertMedicineSchema;
@@ -67,9 +68,10 @@ export default function Medicines() {
   const [editingMedicine, setEditingMedicine] = useState<Medicine | null>(null);
   const [deletingMedicine, setDeletingMedicine] = useState<Medicine | null>(null);
 
-  const { data: medicines = [], isLoading } = useQuery<Medicine[]>({
+  const { data: medicinesResponse, isLoading } = useQuery({
     queryKey: ["/api/medicines"],
   });
+  const medicines = extractPaginatedData<Medicine>(medicinesResponse);
 
   const form = useForm<MedicineForm>({
     resolver: zodResolver(medicineFormSchema),

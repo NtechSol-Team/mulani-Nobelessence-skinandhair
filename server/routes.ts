@@ -9,6 +9,7 @@ import {
   insertBillSchema,
   insertExpenseSchema,
   paymentAdjustmentSchema,
+  paginationSchema,
 } from "@shared/schema";
 import { z } from "zod";
 
@@ -20,9 +21,13 @@ export async function registerRoutes(
   
   app.get("/api/patients", async (req, res) => {
     try {
-      const patients = await storage.getPatients();
-      res.json(patients);
+      const { limit, offset } = paginationSchema.parse(req.query);
+      const { data, total } = await storage.getPatientsPaginated(limit, offset);
+      res.json({ data, total, limit, offset });
     } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors });
+      }
       res.status(500).json({ error: "Failed to fetch patients" });
     }
   });
@@ -123,9 +128,13 @@ export async function registerRoutes(
   
   app.get("/api/medicines", async (req, res) => {
     try {
-      const medicines = await storage.getMedicines();
-      res.json(medicines);
+      const { limit, offset } = paginationSchema.parse(req.query);
+      const { data, total } = await storage.getMedicinesPaginated(limit, offset);
+      res.json({ data, total, limit, offset });
     } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors });
+      }
       res.status(500).json({ error: "Failed to fetch medicines" });
     }
   });
@@ -187,9 +196,23 @@ export async function registerRoutes(
   
   app.get("/api/treatments", async (req, res) => {
     try {
-      const treatments = await storage.getTreatments();
-      res.json(treatments);
+      const { limit, offset } = paginationSchema.parse(req.query);
+      try {
+        const { data, total } = await storage.getTreatmentsPaginated(limit, offset);
+        res.json({ data, total, limit, offset });
+      } catch (paginationError) {
+        // Fallback to non-paginated method
+        console.error("Paginated query failed, using fallback:", paginationError);
+        const allTreatments = await storage.getTreatments();
+        const data = allTreatments.slice(offset, offset + limit);
+        const total = allTreatments.length;
+        res.json({ data, total, limit, offset });
+      }
     } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors });
+      }
+      console.error("Treatments fetch error:", error);
       res.status(500).json({ error: "Failed to fetch treatments" });
     }
   });
@@ -251,9 +274,13 @@ export async function registerRoutes(
   
   app.get("/api/bills", async (req, res) => {
     try {
-      const bills = await storage.getBills();
-      res.json(bills);
+      const { limit, offset } = paginationSchema.parse(req.query);
+      const { data, total } = await storage.getBillsPaginated(limit, offset);
+      res.json({ data, total, limit, offset });
     } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors });
+      }
       res.status(500).json({ error: "Failed to fetch bills" });
     }
   });
@@ -408,9 +435,13 @@ export async function registerRoutes(
   
   app.get("/api/expenses", async (req, res) => {
     try {
-      const expenses = await storage.getExpenses();
-      res.json(expenses);
+      const { limit, offset } = paginationSchema.parse(req.query);
+      const { data, total } = await storage.getExpensesPaginated(limit, offset);
+      res.json({ data, total, limit, offset });
     } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors });
+      }
       res.status(500).json({ error: "Failed to fetch expenses" });
     }
   });

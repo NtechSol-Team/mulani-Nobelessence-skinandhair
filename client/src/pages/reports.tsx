@@ -31,6 +31,7 @@ import {
   Cell,
 } from "recharts";
 import type { Bill, Medicine, Expense } from "@shared/schema";
+import { extractPaginatedData } from "@/lib/utils";
 import {
   format,
   startOfMonth,
@@ -42,17 +43,20 @@ import {
 const COLORS = ["hsl(174, 55%, 42%)", "hsl(200, 60%, 50%)", "hsl(280, 55%, 55%)", "hsl(35, 80%, 55%)", "hsl(350, 70%, 55%)"];
 
 export default function Reports() {
-  const { data: bills = [], isLoading: billsLoading } = useQuery<Bill[]>({
+  const { data: billsResponse, isLoading: billsLoading } = useQuery({
     queryKey: ["/api/bills"],
   });
+  const bills = extractPaginatedData<Bill>(billsResponse);
 
-  const { data: medicines = [], isLoading: medicinesLoading } = useQuery<Medicine[]>({
+  const { data: medicinesResponse, isLoading: medicinesLoading } = useQuery({
     queryKey: ["/api/medicines"],
   });
+  const medicines = extractPaginatedData<Medicine>(medicinesResponse);
 
-  const { data: expenses = [], isLoading: expensesLoading } = useQuery<Expense[]>({
+  const { data: expensesResponse, isLoading: expensesLoading } = useQuery({
     queryKey: ["/api/expenses"],
   });
+  const expenses = extractPaginatedData<Expense>(expensesResponse);
 
   const isLoading = billsLoading || medicinesLoading || expensesLoading;
 

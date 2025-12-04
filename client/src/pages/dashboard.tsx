@@ -7,18 +7,21 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { Patient, Bill } from "@shared/schema";
+import { extractPaginatedData } from "@/lib/utils";
 import { format } from "date-fns";
 
 export default function Dashboard() {
   const [searchQuery, setSearchQuery] = useState("");
 
-  const { data: patients = [], isLoading: patientsLoading } = useQuery<Patient[]>({
+  const { data: patientsResponse, isLoading: patientsLoading } = useQuery({
     queryKey: ["/api/patients"],
   });
+  const patients = extractPaginatedData<Patient>(patientsResponse);
 
-  const { data: bills = [] } = useQuery<Bill[]>({
+  const { data: billsResponse } = useQuery({
     queryKey: ["/api/bills"],
   });
+  const bills = extractPaginatedData<Bill>(billsResponse);
 
   const filteredPatients = patients.filter(
     (patient) =>

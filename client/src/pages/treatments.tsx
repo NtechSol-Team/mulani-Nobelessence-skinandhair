@@ -48,6 +48,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import type { Treatment } from "@shared/schema";
+import { extractPaginatedData } from "@/lib/utils";
 import { insertTreatmentSchema } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
 import { z } from "zod";
@@ -64,9 +65,10 @@ export default function Treatments() {
   const [editingTreatment, setEditingTreatment] = useState<Treatment | null>(null);
   const [deletingTreatment, setDeletingTreatment] = useState<Treatment | null>(null);
 
-  const { data: treatments = [], isLoading } = useQuery<Treatment[]>({
+  const { data: treatmentsResponse, isLoading } = useQuery({
     queryKey: ["/api/treatments"],
   });
+  const treatments = extractPaginatedData<Treatment>(treatmentsResponse);
 
   const form = useForm<TreatmentForm>({
     resolver: zodResolver(treatmentFormSchema),

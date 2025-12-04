@@ -1011,6 +1011,111 @@ export class PostgresStorage implements IStorage {
     }
     return success;
   }
+
+  // ==================== PAGINATION METHODS ====================
+
+  async getPatientsPaginated(
+    limit: number = 50,
+    offset: number = 0
+  ): Promise<{ data: Patient[]; total: number }> {
+    await this.waitForReady();
+    const { rows: countResult } = await pool.query<{ count: string }>(
+      "SELECT COUNT(*) as count FROM patients"
+    );
+    const total = parseInt(countResult[0]?.count || "0", 10);
+
+    const { rows } = await pool.query<DbPatientRow>(
+      `SELECT id, name, phone, registration_date FROM patients 
+       ORDER BY registration_date DESC 
+       LIMIT $1 OFFSET $2`,
+      [limit, offset]
+    );
+    const data = rows.map(mapPatient);
+    return { data, total };
+  }
+
+  async getMedicinesPaginated(
+    limit: number = 50,
+    offset: number = 0
+  ): Promise<{ data: Medicine[]; total: number }> {
+    await this.waitForReady();
+    const { rows: countResult } = await pool.query<{ count: string }>(
+      "SELECT COUNT(*) as count FROM medicines"
+    );
+    const total = parseInt(countResult[0]?.count || "0", 10);
+
+    const { rows } = await pool.query<DbMedicineRow>(
+      `SELECT id, name, purchase_cost, selling_price, quantity FROM medicines 
+       ORDER BY name ASC 
+       LIMIT $1 OFFSET $2`,
+      [limit, offset]
+    );
+    const data = rows.map(mapMedicine);
+    return { data, total };
+  }
+
+  async getTreatmentsPaginated(
+    limit: number = 50,
+    offset: number = 0
+  ): Promise<{ data: Treatment[]; total: number }> {
+    await this.waitForReady();
+    const { rows: countResult } = await pool.query<{ count: string }>(
+      "SELECT COUNT(*) as count FROM treatments"
+    );
+    const total = parseInt(countResult[0]?.count || "0", 10);
+
+    const { rows } = await pool.query<DbTreatmentRow>(
+      `SELECT id, name, default_price FROM treatments 
+       ORDER BY name ASC 
+       LIMIT $1 OFFSET $2`,
+      [limit, offset]
+    );
+    const data = rows.map(mapTreatment);
+    return { data, total };
+  }
+
+  async getBillsPaginated(
+    limit: number = 50,
+    offset: number = 0
+  ): Promise<{ data: Bill[]; total: number }> {
+    await this.waitForReady();
+    const { rows: countResult } = await pool.query<{ count: string }>(
+      "SELECT COUNT(*) as count FROM bills"
+    );
+    const total = parseInt(countResult[0]?.count || "0", 10);
+
+    const { rows } = await pool.query<DbBillRow>(
+      `SELECT id, patient_id, patient_name, date, treatments, medicines,
+              treatment_total, medicine_total, grand_total, amount_paid, pending_amount
+       FROM bills
+       ORDER BY date DESC
+       LIMIT $1 OFFSET $2`,
+      [limit, offset]
+    );
+    const data = rows.map(mapBill);
+    return { data, total };
+  }
+
+  async getExpensesPaginated(
+    limit: number = 50,
+    offset: number = 0
+  ): Promise<{ data: Expense[]; total: number }> {
+    await this.waitForReady();
+    const { rows: countResult } = await pool.query<{ count: string }>(
+      "SELECT COUNT(*) as count FROM expenses"
+    );
+    const total = parseInt(countResult[0]?.count || "0", 10);
+
+    const { rows } = await pool.query<DbExpenseRow>(
+      `SELECT id, description, amount, date, category FROM expenses 
+       ORDER BY date DESC 
+       LIMIT $1 OFFSET $2`,
+      [limit, offset]
+    );
+    const data = rows.map(mapExpense);
+    return { data, total };
+  }
 }
 
 export const storage = new PostgresStorage();
+

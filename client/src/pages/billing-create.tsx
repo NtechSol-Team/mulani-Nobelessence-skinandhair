@@ -27,6 +27,7 @@ import type {
   BillTreatmentItem,
 } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
+import { extractPaginatedData } from "@/lib/utils";
 import { format } from "date-fns";
 
 export default function BillingCreate() {
@@ -40,17 +41,20 @@ export default function BillingCreate() {
   const [selectedMedicines, setSelectedMedicines] = useState<BillMedicineItem[]>([]);
   const [amountPaid, setAmountPaid] = useState("");
 
-  const { data: patients = [], isLoading: patientsLoading } = useQuery<Patient[]>({
+  const { data: patientsResponse, isLoading: patientsLoading } = useQuery({
     queryKey: ["/api/patients"],
   });
+  const patients = extractPaginatedData<Patient>(patientsResponse);
 
-  const { data: medicines = [] } = useQuery<Medicine[]>({
+  const { data: medicinesResponse } = useQuery({
     queryKey: ["/api/medicines"],
   });
+  const medicines = extractPaginatedData<Medicine>(medicinesResponse);
 
-  const { data: treatments = [] } = useQuery<Treatment[]>({
+  const { data: treatmentsResponse } = useQuery({
     queryKey: ["/api/treatments"],
   });
+  const treatments = extractPaginatedData<Treatment>(treatmentsResponse);
 
   const filteredPatients = patients.filter(
     (p) =>

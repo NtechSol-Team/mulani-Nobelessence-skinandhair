@@ -48,12 +48,11 @@ import {
   AlertDialogContent,
   AlertDialogDescription,
   AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { useToast } from "@/hooks/use-toast";
 import type { Bill, Medicine, Treatment, BillMedicineItem, BillTreatmentItem } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import { extractPaginatedData } from "@/lib/utils";
 import { format } from "date-fns";
 
 export default function BillingManage() {
@@ -70,17 +69,20 @@ export default function BillingManage() {
   const [editingTreatments, setEditingTreatments] = useState<BillTreatmentItem[]>([]);
   const [editingMedicines, setEditingMedicines] = useState<BillMedicineItem[]>([]);
 
-  const { data: bills = [], isLoading: billsLoading } = useQuery<Bill[]>({
+  const { data: billsResponse, isLoading: billsLoading } = useQuery({
     queryKey: ["/api/bills"],
   });
+  const bills = extractPaginatedData<Bill>(billsResponse);
 
-  const { data: medicines = [] } = useQuery<Medicine[]>({
+  const { data: medicinesResponse } = useQuery({
     queryKey: ["/api/medicines"],
   });
+  const medicines = extractPaginatedData<Medicine>(medicinesResponse);
 
-  const { data: treatments = [] } = useQuery<Treatment[]>({
+  const { data: treatmentsResponse } = useQuery({
     queryKey: ["/api/treatments"],
   });
+  const treatments = extractPaginatedData<Treatment>(treatmentsResponse);
 
   const adjustPaymentMutation = useMutation({
     mutationFn: async ({ billId, addAmount }: { billId: string; addAmount: number }) => {
@@ -753,13 +755,13 @@ export default function BillingManage() {
       {/* Delete Dialog */}
       <AlertDialog open={!!billToDelete} onOpenChange={() => setBillToDelete(null)}>
         <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete Bill</AlertDialogTitle>
+          <div>
+            <h2 className="font-semibold mb-2">Delete Bill</h2>
             <AlertDialogDescription>
               Are you sure you want to delete this bill for "{billToDelete?.patientName}"?
               This will also restore the medicine stock. This action cannot be undone.
             </AlertDialogDescription>
-          </AlertDialogHeader>
+          </div>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction

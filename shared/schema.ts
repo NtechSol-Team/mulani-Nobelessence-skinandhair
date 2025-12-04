@@ -167,3 +167,18 @@ export interface MedicineReport {
   totalCost: number;
   profit: number;
 }
+
+// Pagination Schema
+export const paginationSchema = z.object({
+  limit: z.coerce.number().int().positive().max(100).default(50),
+  offset: z.coerce.number().int().nonnegative().default(0),
+});
+
+export type PaginationParams = z.infer<typeof paginationSchema>;
+
+export interface PaginatedResponse<T> {
+  data: T[];
+  total: number;
+  limit: number;
+  offset: number;
+}

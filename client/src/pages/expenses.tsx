@@ -58,6 +58,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import type { Expense } from "@shared/schema";
+import { extractPaginatedData } from "@/lib/utils";
 import { insertExpenseSchema } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
 import { format, startOfMonth, endOfMonth, isWithinInterval } from "date-fns";
@@ -88,9 +89,10 @@ export default function Expenses() {
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [deletingExpense, setDeletingExpense] = useState<Expense | null>(null);
 
-  const { data: expenses = [], isLoading } = useQuery<Expense[]>({
+  const { data: expensesResponse, isLoading } = useQuery({
     queryKey: ["/api/expenses"],
   });
+  const expenses = extractPaginatedData<Expense>(expensesResponse);
 
   const form = useForm<ExpenseForm>({
     resolver: zodResolver(expenseFormSchema),
