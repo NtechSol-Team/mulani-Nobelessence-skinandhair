@@ -3,6 +3,8 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import session from "express-session";
+import pgSession from "connect-pg-simple";
+import { Pool } from "pg";
 
 const app = express();
 const httpServer = createServer(app);
@@ -20,16 +22,29 @@ declare module "http" {
   }
 }
 
-// Configure session middleware
+// Create PostgreSQL pool for session store
+const sessionPool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
+});
+
+const PostgresSessionStore = pgSession(session);
+
+// Configure session middleware with PostgreSQL store
 app.use(
   session({
+    store: new PostgresSessionStore({
+      pool: sessionPool,
+      createTableIfMissing: true,
+      tableName: "session",
+    }),
     secret: process.env.SESSION_SECRET || "your-secret-key-change-in-production",
     resave: false,
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
+      sameSite: "lax",
       maxAge: 10 * 60 * 60 * 1000, // 10 hours
     },
   })
