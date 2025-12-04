@@ -8,7 +8,8 @@ import { Navbar } from "@/components/navbar";
 import Dashboard from "@/pages/dashboard";
 import Registration from "@/pages/registration";
 import PatientDetails from "@/pages/patient-details";
-import Billing from "@/pages/billing";
+import BillingCreate from "@/pages/billing-create";
+import BillingManage from "@/pages/bills";
 import Medicines from "@/pages/medicines";
 import Treatments from "@/pages/treatments";
 import Expenses from "@/pages/expenses";
@@ -21,7 +22,8 @@ function Router() {
       <Route path="/" component={Dashboard} />
       <Route path="/registration" component={Registration} />
       <Route path="/patient/:id" component={PatientDetails} />
-      <Route path="/billing" component={Billing} />
+      <Route path="/billing" component={BillingCreate} />
+      <Route path="/bills" component={BillingManage} />
       <Route path="/medicines" component={Medicines} />
       <Route path="/treatments" component={Treatments} />
       <Route path="/expenses" component={Expenses} />

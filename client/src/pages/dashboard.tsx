@@ -31,6 +31,11 @@ export default function Dashboard() {
     (p) => p.registrationDate === format(new Date(), "yyyy-MM-dd")
   );
   const totalRevenue = bills.reduce((sum, bill) => sum + bill.grandTotal, 0);
+  
+  // Today's bills calculations
+  const todayBills = bills.filter((bill) => bill.date === format(new Date(), "yyyy-MM-dd"));
+  const todayPaidRevenue = todayBills.reduce((sum, bill) => sum + bill.amountPaid, 0);
+  const todayPendingAmount = todayBills.reduce((sum, bill) => sum + bill.pendingAmount, 0);
 
   return (
     <div className="p-6 max-w-[1600px] mx-auto space-y-6">
@@ -81,6 +86,42 @@ export default function Dashboard() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
+              Today's Paid
+            </CardTitle>
+            <TrendingUp className="w-4 h-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-green-600" data-testid="text-today-paid">
+              {patientsLoading ? <Skeleton className="h-8 w-20" /> : `₹${todayPaidRevenue.toLocaleString()}`}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              Amount received today
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              Today's Pending
+            </CardTitle>
+            <AlertCircle className="w-4 h-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-destructive" data-testid="text-today-pending">
+              {patientsLoading ? <Skeleton className="h-8 w-20" /> : `₹${todayPendingAmount.toLocaleString()}`}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              Pending from today's bills
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
               Total Revenue
             </CardTitle>
             <TrendingUp className="w-4 h-4 text-muted-foreground" />
@@ -90,7 +131,7 @@ export default function Dashboard() {
               {patientsLoading ? <Skeleton className="h-8 w-20" /> : `₹${totalRevenue.toLocaleString()}`}
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              From all bills
+              Total grand amount from all bills
             </p>
           </CardContent>
         </Card>
@@ -98,7 +139,7 @@ export default function Dashboard() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
-              Pending Payments
+              Bills with Pending
             </CardTitle>
             <AlertCircle className="w-4 h-4 text-muted-foreground" />
           </CardHeader>
@@ -107,7 +148,7 @@ export default function Dashboard() {
               {patientsLoading ? <Skeleton className="h-8 w-16" /> : pendingBills.length}
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              Bills with balance
+              Bills with balance due
             </p>
           </CardContent>
         </Card>

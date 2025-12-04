@@ -12,6 +12,8 @@ import {
   Plus,
   User,
   Pencil,
+  X,
+  Check,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -36,7 +38,7 @@ import {
 } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
 import type { Patient, Visit } from "@shared/schema";
-import { insertVisitSchema } from "@shared/schema";
+import { insertVisitSchema, insertPatientSchema } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
 import { format } from "date-fns";
 import { z } from "zod";
@@ -56,6 +58,7 @@ export default function PatientDetails() {
   const queryClient = useQueryClient();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [isEditingPatient, setIsEditingPatient] = useState(false);
   const [editingVisit, setEditingVisit] = useState<Visit | null>(null);
 
   const { data: patient, isLoading: patientLoading } = useQuery<Patient>({
@@ -74,6 +77,15 @@ export default function PatientDetails() {
       date: format(new Date(), "yyyy-MM-dd"),
       complaints: "",
       diagnosis: "",
+    },
+  });
+
+  const patientForm = useForm<z.infer<typeof insertPatientSchema>>({
+    resolver: zodResolver(insertPatientSchema),
+    defaultValues: {
+      name: patient?.name || "",
+      phone: patient?.phone || "",
+      registrationDate: patient?.registrationDate || format(new Date(), "yyyy-MM-dd"),
     },
   });
 
@@ -109,6 +121,28 @@ export default function PatientDetails() {
     onError: (error: Error) => {
       toast({
         title: "Failed to Add Visit",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const updatePatientMutation = useMutation({
+    mutationFn: async (data: z.infer<typeof insertPatientSchema>) => {
+      return await apiRequest("PATCH", `/api/patients/${patientId}`, data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/patients", patientId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/patients"] });
+      toast({
+        title: "Patient Updated",
+        description: "Patient information has been updated successfully.",
+      });
+      setIsEditingPatient(false);
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Failed to Update Patient",
         description: error.message,
         variant: "destructive",
       });
@@ -193,27 +227,111 @@ export default function PatientDetails() {
 
   return (
     <div className="p-6 max-w-4xl mx-auto space-y-6">
-      <div className="flex items-center gap-4">
-        <Link href="/">
-          <Button variant="ghost" size="icon" data-testid="button-back">
-            <ArrowLeft className="w-5 h-5" />
-          </Button>
-        </Link>
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight" data-testid="text-patient-name">
-            {patient.name}
-          </h1>
-          <div className="flex items-center gap-3 text-muted-foreground text-sm">
-            <span className="flex items-center gap-1">
-              <Phone className="w-3 h-3" />
-              {patient.phone}
-            </span>
-            <span className="text-border">|</span>
-            <span className="flex items-center gap-1">
-              <Calendar className="w-3 h-3" />
-              Registered: {format(new Date(patient.registrationDate), "dd MMM yyyy")}
-            </span>
-          </div>
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex items-start gap-4 flex-1">
+          <Link href="/">
+            <Button variant="ghost" size="icon" data-testid="button-back">
+              <ArrowLeft className="w-5 h-5" />
+            </Button>
+          </Link>
+          {isEditingPatient ? (
+            <div className="flex-1">
+              <Form {...patientForm}>
+                <form
+                  onSubmit={patientForm.handleSubmit((data) =>
+                    updatePatientMutation.mutate(data)
+                  )}
+                  className="space-y-3"
+                >
+                  <FormField
+                    control={patientForm.control}
+                    name="name"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormControl>
+                          <Input
+                            placeholder="Patient name"
+                            {...field}
+                            className="text-2xl font-semibold"
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={patientForm.control}
+                    name="phone"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormControl>
+                          <Input placeholder="Phone number" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <div className="flex gap-2">
+                    <Button
+                      type="submit"
+                      size="sm"
+                      disabled={updatePatientMutation.isPending}
+                    >
+                      <Check className="w-4 h-4 mr-1" />
+                      {updatePatientMutation.isPending ? "Saving..." : "Save"}
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setIsEditingPatient(false)}
+                    >
+                      <X className="w-4 h-4 mr-1" />
+                      Cancel
+                    </Button>
+                  </div>
+                </form>
+              </Form>
+            </div>
+          ) : (
+            <div className="flex-1">
+              <div className="flex items-center gap-2">
+                <h1
+                  className="text-2xl font-semibold tracking-tight"
+                  data-testid="text-patient-name"
+                >
+                  {patient?.name}
+                </h1>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    patientForm.reset({
+                      name: patient?.name || "",
+                      phone: patient?.phone || "",
+                      registrationDate:
+                        patient?.registrationDate || format(new Date(), "yyyy-MM-dd"),
+                    });
+                    setIsEditingPatient(true);
+                  }}
+                  data-testid="button-edit-patient"
+                >
+                  <Pencil className="w-4 h-4" />
+                </Button>
+              </div>
+              <div className="flex items-center gap-3 text-muted-foreground text-sm mt-2">
+                <span className="flex items-center gap-1">
+                  <Phone className="w-3 h-3" />
+                  {patient?.phone}
+                </span>
+                <span className="text-border">|</span>
+                <span className="flex items-center gap-1">
+                  <Calendar className="w-3 h-3" />
+                  Registered: {format(new Date(patient?.registrationDate || ""), "dd MMM yyyy")}
+                </span>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

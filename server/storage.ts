@@ -34,6 +34,7 @@ export interface IStorage {
   getPatients(): Promise<Patient[]>;
   getPatient(id: string): Promise<Patient | undefined>;
   createPatient(patient: InsertPatient): Promise<Patient>;
+  updatePatient(id: string, patient: InsertPatient): Promise<Patient | undefined>;
   
   // Visits
   getVisits(): Promise<Visit[]>;
@@ -62,6 +63,7 @@ export interface IStorage {
   createBill(bill: InsertBill, patientName: string): Promise<Bill>;
   updateBill(id: string, bill: InsertBill, patientName: string): Promise<Bill | undefined>;
   updateBillPayment(id: string, amountPaid: number): Promise<Bill | undefined>;
+  updatePatientBillsName(patientId: string, patientName: string): Promise<void>;
   deleteBill(id: string): Promise<boolean>;
   
   // Expenses
@@ -107,8 +109,8 @@ type DbBillRow = {
   patient_id: string | number;
   patient_name: string;
   date: string;
-  treatments: BillTreatmentItem[];
-  medicines: BillMedicineItem[];
+  treatments: BillTreatmentItem[] | string;
+  medicines: BillMedicineItem[] | string;
   treatment_total: number;
   medicine_total: number;
   grand_total: number;
@@ -270,19 +272,41 @@ const mapTreatment = (row: DbTreatmentRow): Treatment => ({
   defaultPrice: row.default_price,
 });
 
-const mapBill = (row: DbBillRow): Bill => ({
-  id: normalizeId(row.id),
-  patientId: normalizeId(row.patient_id),
-  patientName: row.patient_name,
-  date: row.date,
-  treatments: row.treatments ?? [],
-  medicines: row.medicines ?? [],
-  treatmentTotal: row.treatment_total,
-  medicineTotal: row.medicine_total,
-  grandTotal: row.grand_total,
-  amountPaid: row.amount_paid,
-  pendingAmount: row.pending_amount,
-});
+const mapBill = (row: DbBillRow): Bill => {
+  // Parse medicines if it's a string (stored as JSON in DB)
+  let medicines = row.medicines ?? [];
+  if (typeof medicines === "string") {
+    try {
+      medicines = JSON.parse(medicines);
+    } catch (e) {
+      medicines = [];
+    }
+  }
+  
+  // Parse treatments if it's a string (stored as JSON in DB)
+  let treatments = row.treatments ?? [];
+  if (typeof treatments === "string") {
+    try {
+      treatments = JSON.parse(treatments);
+    } catch (e) {
+      treatments = [];
+    }
+  }
+
+  return {
+    id: normalizeId(row.id),
+    patientId: normalizeId(row.patient_id),
+    patientName: row.patient_name,
+    date: row.date,
+    treatments,
+    medicines,
+    treatmentTotal: row.treatment_total,
+    medicineTotal: row.medicine_total,
+    grandTotal: row.grand_total,
+    amountPaid: row.amount_paid,
+    pendingAmount: row.pending_amount,
+  };
+};
 
 const mapExpense = (row: DbExpenseRow): Expense => ({
   id: normalizeId(row.id),
@@ -382,6 +406,23 @@ export class PostgresStorage implements IStorage {
     const patient = mapPatient(rows[0]);
     this.cache.invalidate("patients");
     this.cache.invalidate("patient:");
+    return patient;
+  }
+
+  async updatePatient(id: string, insertPatient: InsertPatient): Promise<Patient | undefined> {
+    await this.waitForReady();
+    const { rows } = await pool.query<DbPatientRow>(
+      `UPDATE patients
+       SET name = $1, phone = $2, registration_date = $3
+       WHERE id = $4
+       RETURNING id, name, phone, registration_date`,
+      [insertPatient.name, insertPatient.phone, insertPatient.registrationDate, id]
+    );
+    const patient = rows[0] ? mapPatient(rows[0]) : undefined;
+    if (patient) {
+      this.cache.invalidate("patients");
+      this.cache.invalidate("patient:");
+    }
     return patient;
   }
 
@@ -864,6 +905,17 @@ export class PostgresStorage implements IStorage {
       this.cache.invalidate(`bill:${normalizeId(id)}`);
     }
     return success;
+  }
+
+  async updatePatientBillsName(patientId: string, patientName: string): Promise<void> {
+    await this.waitForReady();
+    const dbPatientId = this.convertId("patients", patientId);
+    await pool.query(
+      "UPDATE bills SET patient_name = $1 WHERE patient_id = $2",
+      [patientName, dbPatientId]
+    );
+    this.cache.invalidate("bills");
+    this.cache.invalidate("bill:");
   }
 
   // Expenses

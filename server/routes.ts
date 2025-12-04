@@ -52,6 +52,24 @@ export async function registerRoutes(
     }
   });
 
+  app.patch("/api/patients/:id", async (req, res) => {
+    try {
+      const validated = insertPatientSchema.parse(req.body);
+      const patient = await storage.updatePatient(req.params.id, validated);
+      if (!patient) {
+        return res.status(404).json({ error: "Patient not found" });
+      }
+      // Update all related bills with the new patient name
+      await storage.updatePatientBillsName(req.params.id, patient.name);
+      res.json(patient);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors });
+      }
+      res.status(500).json({ error: "Failed to update patient" });
+    }
+  });
+
   // ==================== VISITS ====================
   
   app.get("/api/visits", async (req, res) => {
@@ -330,12 +348,26 @@ export async function registerRoutes(
 
   app.patch("/api/bills/:id/payment", async (req, res) => {
     try {
-      const { amountPaid } = req.body;
-      if (typeof amountPaid !== "number" || amountPaid < 0) {
+      const { addAmount } = req.body;
+      if (typeof addAmount !== "number" || addAmount < 0) {
         return res.status(400).json({ error: "Invalid payment amount" });
       }
       
-      const bill = await storage.updateBillPayment(req.params.id, amountPaid);
+      // Get current bill to calculate new total
+      const currentBill = await storage.getBill(req.params.id);
+      if (!currentBill) {
+        return res.status(404).json({ error: "Bill not found" });
+      }
+
+      // Calculate new total paid and validate
+      const newTotalPaid = currentBill.amountPaid + addAmount;
+      if (newTotalPaid > currentBill.grandTotal) {
+        return res.status(400).json({ 
+          error: `Cannot exceed bill amount. Remaining: ₹${(currentBill.grandTotal - currentBill.amountPaid).toFixed(2)}` 
+        });
+      }
+      
+      const bill = await storage.updateBillPayment(req.params.id, newTotalPaid);
       if (!bill) {
         return res.status(404).json({ error: "Bill not found" });
       }
@@ -353,8 +385,11 @@ export async function registerRoutes(
       }
 
       // Restore medicine stock for deleted bill
-      for (const med of bill.medicines) {
-        await storage.updateMedicineStock(med.medicineId, med.quantity);
+      const medicines = Array.isArray(bill.medicines) ? bill.medicines : [];
+      for (const med of medicines) {
+        if (med && med.medicineId && med.quantity) {
+          await storage.updateMedicineStock(med.medicineId, med.quantity);
+        }
       }
 
       const deleted = await storage.deleteBill(req.params.id);
@@ -364,6 +399,7 @@ export async function registerRoutes(
 
       res.status(204).send();
     } catch (error) {
+      console.error("Delete bill error:", error);
       res.status(500).json({ error: "Failed to delete bill" });
     }
   });

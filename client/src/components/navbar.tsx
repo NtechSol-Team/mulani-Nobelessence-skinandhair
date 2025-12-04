@@ -17,7 +17,8 @@ import { useTheme } from "@/components/theme-provider";
 const navItems = [
   { path: "/", label: "Dashboard", icon: LayoutDashboard },
   { path: "/registration", label: "New Registration", icon: UserPlus },
-  { path: "/billing", label: "Medicine/Billing", icon: Receipt },
+  { path: "/billing", label: "Create Bill", icon: Receipt },
+  { path: "/bills", label: "View Bills", icon: BarChart3 },
   { path: "/medicines", label: "Medicine Master", icon: Pill },
   { path: "/treatments", label: "Treatment Master", icon: Stethoscope },
   { path: "/expenses", label: "Expenses", icon: Wallet },
