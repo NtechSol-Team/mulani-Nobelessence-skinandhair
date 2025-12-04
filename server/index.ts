@@ -1,4 +1,5 @@
 import express, { type Request, Response, NextFunction } from "express";
+import cors from "cors";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
@@ -80,6 +81,20 @@ app.use(
 );
 
 app.use(express.urlencoded({ extended: false }));
+
+// Configure CORS to allow credentialed requests from the frontend
+const clientOrigin = process.env.CLIENT_ORIGIN || (process.env.NODE_ENV === "production" ? undefined : "http://localhost:5173");
+if (clientOrigin) {
+  app.use(
+    cors({
+      origin: clientOrigin,
+      credentials: true,
+    }),
+  );
+} else {
+  // In production, require CLIENT_ORIGIN env var for security
+  console.warn("CLIENT_ORIGIN is not set; cross-origin cookies may be blocked.");
+}
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
