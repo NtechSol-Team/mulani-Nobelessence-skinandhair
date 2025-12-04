@@ -66,13 +66,19 @@ export async function registerRoutes(
         });
       });
 
-      res.json({ user });
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: error.errors });
+      if (!res.headersSent) {
+        res.json({ user });
       }
-      console.error("Login error:", error);
-      res.status(500).json({ error: "Failed to login" });
+    } catch (error) {
+      if (!res.headersSent) {
+        if (error instanceof z.ZodError) {
+          return res.status(400).json({ error: error.errors });
+        }
+        console.error("Login error:", error);
+        res.status(500).json({ error: "Failed to login" });
+      } else {
+        console.error("Login error (headers already sent):", error);
+      }
     }
   });
 
