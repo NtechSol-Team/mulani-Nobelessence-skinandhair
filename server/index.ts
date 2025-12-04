@@ -28,6 +28,26 @@ const sessionPool = new Pool({
   ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
 });
 
+// Ensure session table exists
+async function ensureSessionTable() {
+  try {
+    await sessionPool.query(`
+      CREATE TABLE IF NOT EXISTS "session" (
+        "sid" varchar NOT NULL COLLATE "default",
+        "sess" json NOT NULL,
+        "expire" timestamp(6) NOT NULL,
+        PRIMARY KEY ("sid")
+      );
+      CREATE INDEX IF NOT EXISTS "IDX_session_expire" on "session" ("expire");
+    `);
+  } catch (err) {
+    console.error("Error creating session table:", err);
+  }
+}
+
+// Initialize session table on startup
+ensureSessionTable().catch(console.error);
+
 const PostgresSessionStore = pgSession(session);
 
 // Configure session middleware with PostgreSQL store
@@ -35,7 +55,6 @@ app.use(
   session({
     store: new PostgresSessionStore({
       pool: sessionPool,
-      createTableIfMissing: true,
       tableName: "session",
     }),
     secret: process.env.SESSION_SECRET || "your-secret-key-change-in-production",
