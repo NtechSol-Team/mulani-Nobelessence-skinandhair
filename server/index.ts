@@ -9,13 +9,9 @@ import { createServer } from "http";
 const app = express();
 
 // When running behind a proxy (e.g. Render, Heroku), enable trust proxy
-// so Express knows the original request protocol (https) and cookies
-// with `secure: true` will be handled correctly.
-  if (process.env.NODE_ENV === "production") {
+// so Express knows the original request protocol (https)
+if (process.env.NODE_ENV === "production") {
   app.set("trust proxy", 1);
-  if (!process.env.SESSION_SECRET) {
-    console.warn("SESSION_SECRET is not set in production - please set it in your environment.");
-  }
 }
 
 // Enable gzip compression for responses to reduce transfer size
@@ -40,19 +36,13 @@ app.use(
 
 app.use(express.urlencoded({ extended: false }));
 
-// Configure CORS to allow credentialed requests from the frontend
-const clientOrigin = process.env.CLIENT_ORIGIN || (process.env.NODE_ENV === "production" ? undefined : "http://localhost:5173");
-if (clientOrigin) {
-  app.use(
-    cors({
-      origin: clientOrigin,
-      credentials: true,
-    }),
-  );
-} else {
-  // In production, require CLIENT_ORIGIN env var for security
-  console.warn("CLIENT_ORIGIN is not set; cross-origin cookies may be blocked.");
-}
+// Configure CORS to allow requests from the frontend
+const clientOrigin = process.env.CLIENT_ORIGIN || (process.env.NODE_ENV === "production" ? "*" : "http://localhost:5173");
+app.use(
+  cors({
+    origin: clientOrigin,
+  }),
+);
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
