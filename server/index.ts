@@ -3,74 +3,28 @@ import cors from "cors";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
-import session from "express-session";
-import pgSession from "connect-pg-simple";
-import { Pool } from "pg";
+// session-based auth removed: express-session and connect-pg-simple imports removed
 
 const app = express();
-const httpServer = createServer(app);
 
-declare module "express-session" {
-  interface SessionData {
-    userId: string;
-    username: string;
+// When running behind a proxy (e.g. Render, Heroku), enable trust proxy
+// so Express knows the original request protocol (https) and cookies
+// with `secure: true` will be handled correctly.
+if (process.env.NODE_ENV === "production") {
+  app.set("trust proxy", 1);
+  if (!process.env.SESSION_SECRET) {
+    console.warn("SESSION_SECRET is not set in production - please set it in your environment.");
   }
 }
+const httpServer = createServer(app);
+
+// Session middleware removed — authentication/login has been removed intentionally.
 
 declare module "http" {
   interface IncomingMessage {
     rawBody: unknown;
   }
 }
-
-// Create PostgreSQL pool for session store
-const sessionPool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
-});
-
-// Ensure session table exists
-async function ensureSessionTable() {
-  try {
-    await sessionPool.query(`
-      CREATE TABLE IF NOT EXISTS "session" (
-        "sid" varchar NOT NULL COLLATE "default",
-        "sess" json NOT NULL,
-        "expire" timestamp(6) NOT NULL,
-        PRIMARY KEY ("sid")
-      );
-      CREATE INDEX IF NOT EXISTS "IDX_session_expire" on "session" ("expire");
-    `);
-  } catch (err) {
-    console.error("Error creating session table:", err);
-  }
-}
-
-// Initialize session table on startup
-ensureSessionTable().catch(console.error);
-
-const PostgresSessionStore = pgSession(session);
-
-// Configure session middleware with PostgreSQL store
-app.use(
-  session({
-    store: new PostgresSessionStore({
-      pool: sessionPool,
-      tableName: "session",
-    }),
-    name: "connect.sid",
-    secret: process.env.SESSION_SECRET || "your-secret-key-change-in-production",
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-      maxAge: 10 * 60 * 60 * 1000, // 10 hours
-      path: "/",
-    },
-  })
-);
 
 app.use(
   express.json({

@@ -10,7 +10,7 @@ import {
   Moon,
   Sun,
   Heart,
-  LogOut
+  // LogOut removed
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useTheme } from "@/components/theme-provider";
@@ -32,26 +32,7 @@ export function Navbar() {
   const { theme, setTheme } = useTheme();
   const { toast } = useToast();
 
-  const handleLogout = async () => {
-    try {
-      const response = await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
-      if (response.ok) {
-        toast({
-          title: "Success",
-          description: "Logged out successfully",
-        });
-        setLocation("/login");
-        // Reload page to reset auth state
-        window.location.href = "/login";
-      }
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to logout",
-        variant: "destructive",
-      });
-    }
-  };
+  // Logout removed
 
   return (
     <nav className="sticky top-0 z-50 w-full border-b bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80">
@@ -100,15 +81,7 @@ export function Navbar() {
                 <Moon className="w-5 h-5" />
               )}
             </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={handleLogout}
-              title="Logout"
-              data-testid="button-logout"
-            >
-              <LogOut className="w-5 h-5" />
-            </Button>
+            {/* Logout button removed */}
           </div>
         </div>
       </div>

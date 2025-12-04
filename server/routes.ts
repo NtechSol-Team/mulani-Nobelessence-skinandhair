@@ -10,8 +10,7 @@ import {
   insertExpenseSchema,
   paymentAdjustmentSchema,
   paginationSchema,
-  registerSchema,
-  loginSchema,
+  // registerSchema, loginSchema removed with auth
 } from "@shared/schema";
 import { z } from "zod";
 
@@ -19,110 +18,8 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
-  // ==================== AUTH ====================
-  
-  // User registration disabled - only backend/developer can create users
-  app.post("/api/auth/register", async (req, res) => {
-    res.status(403).json({ error: "User registration is disabled. Contact administrator to create an account." });
-  });
-
-  app.post("/api/auth/login", async (req, res) => {
-    try {
-      const { username, password } = loginSchema.parse(req.body);
-      console.log(`Login attempt for user: ${username}`);
-      
-      const user = await storage.getUserByUsername(username);
-      if (!user) {
-        console.log(`User not found: ${username}`);
-        return res.status(401).json({ error: "Invalid credentials" });
-      }
-      
-      const valid = await storage.verifyPassword(password, user.passwordHash);
-      if (!valid) {
-        console.log(`Invalid password for user: ${username}`);
-        return res.status(401).json({ error: "Invalid credentials" });
-      }
-      
-      console.log(`Credentials valid for user: ${username}, creating session...`);
-
-      // Create session using promises to avoid nested callback hell
-      await new Promise<void>((resolve, reject) => {
-        req.session.regenerate((err) => {
-          if (err) {
-            console.error("Session regenerate error:", err);
-            reject(err);
-          } else {
-            console.log(`Session regenerated for user: ${username}`);
-            resolve();
-          }
-        });
-      });
-
-      req.session.userId = user.id;
-      req.session.username = user.username;
-      console.log(`Session data set: userId=${user.id}, username=${user.username}`);
-
-      await new Promise<void>((resolve, reject) => {
-        req.session.save((err) => {
-          if (err) {
-            console.error("Session save error:", err);
-            reject(err);
-          } else {
-            console.log(`Session saved for user: ${username}, SID: ${req.sessionID}`);
-            resolve();
-          }
-        });
-      });
-
-      if (!res.headersSent) {
-        console.log(`Sending login success response for user: ${username}`);
-        res.json({ user });
-      }
-    } catch (error) {
-      if (!res.headersSent) {
-        if (error instanceof z.ZodError) {
-          return res.status(400).json({ error: error.errors });
-        }
-        console.error("Login error:", error);
-        res.status(500).json({ error: "Failed to login" });
-      } else {
-        console.error("Login error (headers already sent):", error);
-      }
-    }
-  });
-
-  app.post("/api/auth/logout", (req, res) => {
-    req.session.destroy((err) => {
-      if (err) {
-        console.error("Session destroy error:", err);
-        return res.status(500).json({ error: "Failed to logout" });
-      }
-      // Clear session cookie
-      res.clearCookie("connect.sid");
-      res.json({ message: "Logged out successfully" });
-    });
-  });
-
-  app.get("/api/auth/me", (req, res) => {
-    const sessionId = req.sessionID;
-    const userId = req.session?.userId;
-    const username = req.session?.username;
-    
-    console.log(`Auth check - SID: ${sessionId}, userId: ${userId}, username: ${username}`);
-    
-    if (!userId) {
-      console.log(`Auth check failed - no userId in session for SID: ${sessionId}`);
-      return res.status(401).json({ error: "Not authenticated" });
-    }
-    
-    console.log(`Auth check passed for user: ${username} (${userId})`);
-    res.json({ 
-      user: { 
-        id: userId, 
-        username: username
-      } 
-    });
-  });
+  // Authentication removed: login/logout/session endpoints and related session handling
+  // were removed intentionally. Authentication-related code used to live here.
 
   // ==================== PATIENTS ====================
   
