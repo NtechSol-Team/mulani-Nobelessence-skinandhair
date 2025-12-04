@@ -29,17 +29,22 @@ export async function registerRoutes(
   app.post("/api/auth/login", async (req, res) => {
     try {
       const { username, password } = loginSchema.parse(req.body);
+      console.log(`Login attempt for user: ${username}`);
       
       const user = await storage.getUserByUsername(username);
       if (!user) {
+        console.log(`User not found: ${username}`);
         return res.status(401).json({ error: "Invalid credentials" });
       }
       
       const valid = await storage.verifyPassword(password, user.passwordHash);
       if (!valid) {
+        console.log(`Invalid password for user: ${username}`);
         return res.status(401).json({ error: "Invalid credentials" });
       }
       
+      console.log(`Credentials valid for user: ${username}, creating session...`);
+
       // Create session using promises to avoid nested callback hell
       await new Promise<void>((resolve, reject) => {
         req.session.regenerate((err) => {
@@ -47,6 +52,7 @@ export async function registerRoutes(
             console.error("Session regenerate error:", err);
             reject(err);
           } else {
+            console.log(`Session regenerated for user: ${username}`);
             resolve();
           }
         });
@@ -54,6 +60,7 @@ export async function registerRoutes(
 
       req.session.userId = user.id;
       req.session.username = user.username;
+      console.log(`Session data set: userId=${user.id}, username=${user.username}`);
 
       await new Promise<void>((resolve, reject) => {
         req.session.save((err) => {
@@ -61,12 +68,14 @@ export async function registerRoutes(
             console.error("Session save error:", err);
             reject(err);
           } else {
+            console.log(`Session saved for user: ${username}, SID: ${req.sessionID}`);
             resolve();
           }
         });
       });
 
       if (!res.headersSent) {
+        console.log(`Sending login success response for user: ${username}`);
         res.json({ user });
       }
     } catch (error) {
@@ -95,13 +104,22 @@ export async function registerRoutes(
   });
 
   app.get("/api/auth/me", (req, res) => {
-    if (!req.session?.userId) {
+    const sessionId = req.sessionID;
+    const userId = req.session?.userId;
+    const username = req.session?.username;
+    
+    console.log(`Auth check - SID: ${sessionId}, userId: ${userId}, username: ${username}`);
+    
+    if (!userId) {
+      console.log(`Auth check failed - no userId in session for SID: ${sessionId}`);
       return res.status(401).json({ error: "Not authenticated" });
     }
+    
+    console.log(`Auth check passed for user: ${username} (${userId})`);
     res.json({ 
       user: { 
-        id: req.session.userId, 
-        username: req.session.username 
+        id: userId, 
+        username: username
       } 
     });
   });

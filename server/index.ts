@@ -57,14 +57,16 @@ app.use(
       pool: sessionPool,
       tableName: "session",
     }),
+    name: "connect.sid",
     secret: process.env.SESSION_SECRET || "your-secret-key-change-in-production",
     resave: false,
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
       maxAge: 10 * 60 * 60 * 1000, // 10 hours
+      path: "/",
     },
   })
 );
