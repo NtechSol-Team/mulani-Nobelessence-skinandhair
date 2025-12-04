@@ -18,7 +18,7 @@ export const pool = new Pool({
 });
 
 // helper for simple queries
-export async function query<T = any>(text: string, params?: any[]) {
+export async function query<T extends Record<string, any> = Record<string, any>>(text: string, params?: any[]) {
   const client = await pool.connect();
   try {
     const res = await client.query<T>(text, params);
