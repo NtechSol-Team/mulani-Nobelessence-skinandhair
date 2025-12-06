@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import {
   BarChart3,
   TrendingUp,
@@ -10,6 +11,14 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -43,6 +52,9 @@ import {
 const COLORS = ["hsl(174, 55%, 42%)", "hsl(200, 60%, 50%)", "hsl(280, 55%, 55%)", "hsl(35, 80%, 55%)", "hsl(350, 70%, 55%)"];
 
 export default function Reports() {
+  const [dateFilter, setDateFilter] = useState("current-month");
+  const [customStartDate, setCustomStartDate] = useState<string>("");
+  const [customEndDate, setCustomEndDate] = useState<string>("");
   const { data: billsResponse, isLoading: billsLoading } = useQuery({
     queryKey: ["/api/bills"],
   });
@@ -64,11 +76,33 @@ export default function Reports() {
   const monthStart = startOfMonth(today);
   const monthEnd = endOfMonth(today);
 
+  // Calculate date range based on filter
+  let dateRangeStart = monthStart;
+  let dateRangeEnd = monthEnd;
+  
+  if (dateFilter === "current-month") {
+    dateRangeStart = monthStart;
+    dateRangeEnd = monthEnd;
+  } else if (dateFilter === "last-month") {
+    const lastMonth = subMonths(today, 1);
+    dateRangeStart = startOfMonth(lastMonth);
+    dateRangeEnd = endOfMonth(lastMonth);
+  } else if (dateFilter === "last-3-months") {
+    dateRangeStart = startOfMonth(subMonths(today, 2));
+    dateRangeEnd = monthEnd;
+  } else if (dateFilter === "last-6-months") {
+    dateRangeStart = startOfMonth(subMonths(today, 5));
+    dateRangeEnd = monthEnd;
+  } else if (dateFilter === "custom" && customStartDate && customEndDate) {
+    dateRangeStart = new Date(customStartDate);
+    dateRangeEnd = new Date(customEndDate);
+  }
+
   const thisMonthBills = bills.filter((b) =>
-    isWithinInterval(new Date(b.date), { start: monthStart, end: monthEnd })
+    isWithinInterval(new Date(b.date), { start: dateRangeStart, end: dateRangeEnd })
   );
   const thisMonthExpenses = expenses.filter((e) =>
-    isWithinInterval(new Date(e.date), { start: monthStart, end: monthEnd })
+    isWithinInterval(new Date(e.date), { start: dateRangeStart, end: dateRangeEnd })
   );
 
   const thisMonthRevenue = thisMonthBills.reduce((sum, b) => sum + b.grandTotal, 0);
@@ -139,9 +173,47 @@ export default function Reports() {
           Reports & Analytics
         </h1>
         <p className="text-muted-foreground">
-          Financial overview and performance metrics for {format(today, "MMMM yyyy")}
+          Financial overview and performance metrics
         </p>
       </div>
+
+      <Card className="bg-card/50">
+        <CardContent className="pt-6">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+            <label className="text-sm font-medium">Filter by Date:</label>
+            <Select value={dateFilter} onValueChange={setDateFilter}>
+              <SelectTrigger className="w-full sm:w-48">
+                <SelectValue placeholder="Select date range" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="current-month">Current Month</SelectItem>
+                <SelectItem value="last-month">Last Month</SelectItem>
+                <SelectItem value="last-3-months">Last 3 Months</SelectItem>
+                <SelectItem value="last-6-months">Last 6 Months</SelectItem>
+                <SelectItem value="custom">Custom Range</SelectItem>
+              </SelectContent>
+            </Select>
+            {dateFilter === "custom" && (
+              <div className="flex flex-col sm:flex-row gap-2 flex-1">
+                <Input
+                  type="date"
+                  value={customStartDate}
+                  onChange={(e) => setCustomStartDate(e.target.value)}
+                  placeholder="Start date"
+                  className="flex-1"
+                />
+                <Input
+                  type="date"
+                  value={customEndDate}
+                  onChange={(e) => setCustomEndDate(e.target.value)}
+                  placeholder="End date"
+                  className="flex-1"
+                />
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card>

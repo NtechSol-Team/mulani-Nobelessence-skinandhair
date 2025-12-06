@@ -61,7 +61,7 @@ import type { Expense } from "@shared/schema";
 import { extractPaginatedData } from "@/lib/utils";
 import { insertExpenseSchema } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
-import { format, startOfMonth, endOfMonth, isWithinInterval } from "date-fns";
+import { format, startOfMonth, endOfMonth, isWithinInterval, subMonths } from "date-fns";
 import { z } from "zod";
 
 const expenseFormSchema = insertExpenseSchema;
@@ -88,6 +88,9 @@ export default function Expenses() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [deletingExpense, setDeletingExpense] = useState<Expense | null>(null);
+  const [dateFilter, setDateFilter] = useState("current-month");
+  const [customStartDate, setCustomStartDate] = useState<string>("");
+  const [customEndDate, setCustomEndDate] = useState<string>("");
 
   const { data: expensesResponse, isLoading } = useQuery({
     queryKey: ["/api/expenses"],
@@ -197,7 +200,40 @@ export default function Expenses() {
     }
   };
 
-  const filteredExpenses = expenses.filter(
+  const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0);
+
+  const today = new Date();
+  const monthStart = startOfMonth(today);
+  const monthEnd = endOfMonth(today);
+  
+  // Calculate date range based on filter
+  let dateRangeStart = monthStart;
+  let dateRangeEnd = monthEnd;
+  
+  if (dateFilter === "current-month") {
+    dateRangeStart = monthStart;
+    dateRangeEnd = monthEnd;
+  } else if (dateFilter === "last-month") {
+    const lastMonth = subMonths(today, 1);
+    dateRangeStart = startOfMonth(lastMonth);
+    dateRangeEnd = endOfMonth(lastMonth);
+  } else if (dateFilter === "last-3-months") {
+    dateRangeStart = startOfMonth(subMonths(today, 2));
+    dateRangeEnd = monthEnd;
+  } else if (dateFilter === "last-6-months") {
+    dateRangeStart = startOfMonth(subMonths(today, 5));
+    dateRangeEnd = monthEnd;
+  } else if (dateFilter === "custom" && customStartDate && customEndDate) {
+    dateRangeStart = new Date(customStartDate);
+    dateRangeEnd = new Date(customEndDate);
+  }
+
+  // Filter by selected date range
+  const dateFilteredExpenses = expenses.filter((e) =>
+    isWithinInterval(new Date(e.date), { start: dateRangeStart, end: dateRangeEnd })
+  );
+
+  const filteredExpenses = dateFilteredExpenses.filter(
     (e) =>
       e.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
       e.category.toLowerCase().includes(searchQuery.toLowerCase())
@@ -207,20 +243,18 @@ export default function Expenses() {
     (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
   );
 
-  const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0);
-
-  const today = new Date();
-  const monthStart = startOfMonth(today);
-  const monthEnd = endOfMonth(today);
   const thisMonthExpenses = expenses.filter((e) =>
     isWithinInterval(new Date(e.date), { start: monthStart, end: monthEnd })
   );
   const thisMonthTotal = thisMonthExpenses.reduce((sum, e) => sum + e.amount, 0);
 
-  const categoryTotals = expenses.reduce((acc, e) => {
+  const categoryTotals = dateFilteredExpenses.reduce((acc, e) => {
     acc[e.category] = (acc[e.category] || 0) + e.amount;
     return acc;
   }, {} as Record<string, number>);
+
+  // Calculate total for filtered date range
+  const filteredRangeTotal = dateFilteredExpenses.reduce((sum, e) => sum + e.amount, 0);
 
   return (
     <div className="p-6 max-w-[1600px] mx-auto space-y-6">
@@ -233,7 +267,7 @@ export default function Expenses() {
         </p>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className={`grid gap-4 ${dateFilter !== "current-month" ? "md:grid-cols-4" : "md:grid-cols-3"}`}>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
@@ -276,6 +310,29 @@ export default function Expenses() {
           </CardContent>
         </Card>
 
+        {dateFilter !== "current-month" && (
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                Filter Range Total
+              </CardTitle>
+              <Calendar className="w-4 h-4 text-primary" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-red-600" data-testid="text-filter-range-expenses">
+                {isLoading ? (
+                  <Skeleton className="h-8 w-24" />
+                ) : (
+                  `₹${filteredRangeTotal.toLocaleString()}`
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Selected filter range
+              </p>
+            </CardContent>
+          </Card>
+        )}
+
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
@@ -297,146 +354,181 @@ export default function Expenses() {
       <div className="grid gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <CardHeader className="pb-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <CardTitle className="flex items-center gap-2 text-lg">
-                <Wallet className="w-5 h-5 text-primary" />
-                Expense Records
-              </CardTitle>
-              <div className="flex items-center gap-3">
-                <div className="relative w-full sm:w-64">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                  <Input
-                    type="search"
-                    placeholder="Search expenses..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="pl-9"
-                    data-testid="input-expense-search"
-                  />
+            <div className="flex flex-col gap-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <Wallet className="w-5 h-5 text-primary" />
+                  Expense Records
+                </CardTitle>
+                <div className="flex items-center gap-3">
+                  <div className="relative w-full sm:w-64">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                    <Input
+                      type="search"
+                      placeholder="Search expenses..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="pl-9"
+                      data-testid="input-expense-search"
+                    />
+                  </div>
+                  <Dialog open={isDialogOpen} onOpenChange={(open) => !open && closeDialog()}>
+                    <DialogTrigger asChild>
+                      <Button onClick={() => setIsDialogOpen(true)} data-testid="button-add-expense">
+                        <Plus className="w-4 h-4 mr-2" />
+                        Add Expense
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>
+                          {editingExpense ? "Edit Expense" : "Add New Expense"}
+                        </DialogTitle>
+                      </DialogHeader>
+                      <Form {...form}>
+                        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+                          <FormField
+                            control={form.control}
+                            name="description"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Description</FormLabel>
+                                <FormControl>
+                                  <Input
+                                    placeholder="Enter expense description"
+                                    {...field}
+                                    data-testid="input-expense-description"
+                                  />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+
+                          <div className="grid grid-cols-2 gap-4">
+                            <FormField
+                              control={form.control}
+                              name="amount"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>Amount (₹)</FormLabel>
+                                  <FormControl>
+                                    <Input
+                                      type="number"
+                                      placeholder="0"
+                                      {...field}
+                                      onChange={(e) =>
+                                        field.onChange(parseFloat(e.target.value) || 0)
+                                      }
+                                      data-testid="input-expense-amount"
+                                    />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+
+                            <FormField
+                              control={form.control}
+                              name="date"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>Date</FormLabel>
+                                  <FormControl>
+                                    <Input
+                                      type="date"
+                                      {...field}
+                                      data-testid="input-expense-date"
+                                    />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          </div>
+
+                          <FormField
+                            control={form.control}
+                            name="category"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Category</FormLabel>
+                                <Select
+                                  onValueChange={field.onChange}
+                                  defaultValue={field.value}
+                                >
+                                  <FormControl>
+                                    <SelectTrigger data-testid="select-expense-category">
+                                      <SelectValue placeholder="Select category" />
+                                    </SelectTrigger>
+                                  </FormControl>
+                                  <SelectContent>
+                                    {EXPENSE_CATEGORIES.map((category) => (
+                                      <SelectItem key={category} value={category}>
+                                        {category}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+
+                          <div className="flex justify-end gap-3 pt-2">
+                            <Button type="button" variant="outline" onClick={closeDialog}>
+                              Cancel
+                            </Button>
+                            <Button
+                              type="submit"
+                              disabled={createMutation.isPending || updateMutation.isPending}
+                              data-testid="button-save-expense"
+                            >
+                              {createMutation.isPending || updateMutation.isPending
+                                ? "Saving..."
+                                : editingExpense
+                                ? "Update"
+                                : "Add Expense"}
+                            </Button>
+                          </div>
+                        </form>
+                      </Form>
+                    </DialogContent>
+                  </Dialog>
                 </div>
-                <Dialog open={isDialogOpen} onOpenChange={(open) => !open && closeDialog()}>
-                  <DialogTrigger asChild>
-                    <Button onClick={() => setIsDialogOpen(true)} data-testid="button-add-expense">
-                      <Plus className="w-4 h-4 mr-2" />
-                      Add Expense
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent>
-                    <DialogHeader>
-                      <DialogTitle>
-                        {editingExpense ? "Edit Expense" : "Add New Expense"}
-                      </DialogTitle>
-                    </DialogHeader>
-                    <Form {...form}>
-                      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-                        <FormField
-                          control={form.control}
-                          name="description"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Description</FormLabel>
-                              <FormControl>
-                                <Input
-                                  placeholder="Enter expense description"
-                                  {...field}
-                                  data-testid="input-expense-description"
-                                />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-
-                        <div className="grid grid-cols-2 gap-4">
-                          <FormField
-                            control={form.control}
-                            name="amount"
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>Amount (₹)</FormLabel>
-                                <FormControl>
-                                  <Input
-                                    type="number"
-                                    placeholder="0"
-                                    {...field}
-                                    onChange={(e) =>
-                                      field.onChange(parseFloat(e.target.value) || 0)
-                                    }
-                                    data-testid="input-expense-amount"
-                                  />
-                                </FormControl>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-
-                          <FormField
-                            control={form.control}
-                            name="date"
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>Date</FormLabel>
-                                <FormControl>
-                                  <Input
-                                    type="date"
-                                    {...field}
-                                    data-testid="input-expense-date"
-                                  />
-                                </FormControl>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                        </div>
-
-                        <FormField
-                          control={form.control}
-                          name="category"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Category</FormLabel>
-                              <Select
-                                onValueChange={field.onChange}
-                                defaultValue={field.value}
-                              >
-                                <FormControl>
-                                  <SelectTrigger data-testid="select-expense-category">
-                                    <SelectValue placeholder="Select category" />
-                                  </SelectTrigger>
-                                </FormControl>
-                                <SelectContent>
-                                  {EXPENSE_CATEGORIES.map((category) => (
-                                    <SelectItem key={category} value={category}>
-                                      {category}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-
-                        <div className="flex justify-end gap-3 pt-2">
-                          <Button type="button" variant="outline" onClick={closeDialog}>
-                            Cancel
-                          </Button>
-                          <Button
-                            type="submit"
-                            disabled={createMutation.isPending || updateMutation.isPending}
-                            data-testid="button-save-expense"
-                          >
-                            {createMutation.isPending || updateMutation.isPending
-                              ? "Saving..."
-                              : editingExpense
-                              ? "Update"
-                              : "Add Expense"}
-                          </Button>
-                        </div>
-                      </form>
-                    </Form>
-                  </DialogContent>
-                </Dialog>
+              </div>
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                <label className="text-sm font-medium">Filter by Date:</label>
+                <Select value={dateFilter} onValueChange={setDateFilter}>
+                  <SelectTrigger className="w-full sm:w-48">
+                    <SelectValue placeholder="Select date range" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="current-month">Current Month</SelectItem>
+                    <SelectItem value="last-month">Last Month</SelectItem>
+                    <SelectItem value="last-3-months">Last 3 Months</SelectItem>
+                    <SelectItem value="last-6-months">Last 6 Months</SelectItem>
+                    <SelectItem value="custom">Custom Range</SelectItem>
+                  </SelectContent>
+                </Select>
+                {dateFilter === "custom" && (
+                  <div className="flex flex-col sm:flex-row gap-2 flex-1">
+                    <Input
+                      type="date"
+                      value={customStartDate}
+                      onChange={(e) => setCustomStartDate(e.target.value)}
+                      placeholder="Start date"
+                      className="flex-1"
+                    />
+                    <Input
+                      type="date"
+                      value={customEndDate}
+                      onChange={(e) => setCustomEndDate(e.target.value)}
+                      placeholder="End date"
+                      className="flex-1"
+                    />
+                  </div>
+                )}
               </div>
             </div>
           </CardHeader>

@@ -53,7 +53,7 @@ import type { Bill, Medicine, Treatment, BillMedicineItem, BillTreatmentItem } f
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { extractPaginatedData } from "@/lib/utils";
-import { format } from "date-fns";
+import { format, startOfMonth, endOfMonth, isWithinInterval, subMonths } from "date-fns";
 
 export default function BillingManage() {
   const { toast } = useToast();
@@ -68,6 +68,9 @@ export default function BillingManage() {
   const [isEditBillDialogOpen, setIsEditBillDialogOpen] = useState(false);
   const [editingTreatments, setEditingTreatments] = useState<BillTreatmentItem[]>([]);
   const [editingMedicines, setEditingMedicines] = useState<BillMedicineItem[]>([]);
+  const [dateFilter, setDateFilter] = useState("current-month");
+  const [customStartDate, setCustomStartDate] = useState<string>("");
+  const [customEndDate, setCustomEndDate] = useState<string>("");
 
   const { data: billsResponse, isLoading: billsLoading } = useQuery({
     queryKey: ["/api/bills"],
@@ -256,15 +259,46 @@ export default function BillingManage() {
     setEditingMedicines(editingMedicines.filter((_, i) => i !== index));
   };
 
+  // Calculate date range based on filter
+  const today = new Date();
+  const monthStart = startOfMonth(today);
+  const monthEnd = endOfMonth(today);
+  
+  let dateRangeStart = monthStart;
+  let dateRangeEnd = monthEnd;
+  
+  if (dateFilter === "current-month") {
+    dateRangeStart = monthStart;
+    dateRangeEnd = monthEnd;
+  } else if (dateFilter === "last-month") {
+    const lastMonth = subMonths(today, 1);
+    dateRangeStart = startOfMonth(lastMonth);
+    dateRangeEnd = endOfMonth(lastMonth);
+  } else if (dateFilter === "last-3-months") {
+    dateRangeStart = startOfMonth(subMonths(today, 2));
+    dateRangeEnd = monthEnd;
+  } else if (dateFilter === "last-6-months") {
+    dateRangeStart = startOfMonth(subMonths(today, 5));
+    dateRangeEnd = monthEnd;
+  } else if (dateFilter === "custom" && customStartDate && customEndDate) {
+    dateRangeStart = new Date(customStartDate);
+    dateRangeEnd = new Date(customEndDate);
+  }
+
+  // Filter bills by date range
+  const dateFilteredBills = bills.filter((b) =>
+    isWithinInterval(new Date(b.date), { start: dateRangeStart, end: dateRangeEnd })
+  );
+
   // Separate pending and recent bills
-  const pendingBills = bills
+  const pendingBills = dateFilteredBills
     .filter((b) => b.pendingAmount > 0)
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
     .filter((bill) =>
       bill.patientName.toLowerCase().includes(pendingBillSearch.toLowerCase().trim())
     );
 
-  const recentBills = bills
+  const recentBills = dateFilteredBills
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
     .filter((bill) =>
       bill.patientName.toLowerCase().includes(recentBillSearch.toLowerCase().trim())
@@ -370,6 +404,44 @@ export default function BillingManage() {
           View recent bills and manage pending payments
         </p>
       </div>
+
+      <Card className="bg-card/50">
+        <CardContent className="pt-6">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+            <label className="text-sm font-medium">Filter by Date:</label>
+            <Select value={dateFilter} onValueChange={setDateFilter}>
+              <SelectTrigger className="w-full sm:w-48">
+                <SelectValue placeholder="Select date range" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="current-month">Current Month</SelectItem>
+                <SelectItem value="last-month">Last Month</SelectItem>
+                <SelectItem value="last-3-months">Last 3 Months</SelectItem>
+                <SelectItem value="last-6-months">Last 6 Months</SelectItem>
+                <SelectItem value="custom">Custom Range</SelectItem>
+              </SelectContent>
+            </Select>
+            {dateFilter === "custom" && (
+              <div className="flex flex-col sm:flex-row gap-2 flex-1">
+                <Input
+                  type="date"
+                  value={customStartDate}
+                  onChange={(e) => setCustomStartDate(e.target.value)}
+                  placeholder="Start date"
+                  className="flex-1"
+                />
+                <Input
+                  type="date"
+                  value={customEndDate}
+                  onChange={(e) => setCustomEndDate(e.target.value)}
+                  placeholder="End date"
+                  className="flex-1"
+                />
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
       <div className="grid gap-6 lg:grid-cols-2">
         {/* Recent Bills */}
