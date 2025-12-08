@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { Patient, Bill } from "@shared/schema";
+import type { Patient, Bill, Visit } from "@shared/schema";
 import { extractPaginatedData } from "@/lib/utils";
 import { format } from "date-fns";
 
@@ -23,6 +23,11 @@ export default function Dashboard() {
   });
   const bills = extractPaginatedData<Bill>(billsResponse);
 
+  const { data: visitsResponse } = useQuery({
+    queryKey: ["/api/visits"],
+  });
+  const visits = extractPaginatedData<Visit>(visitsResponse);
+
   const filteredPatients = patients.filter(
     (patient) =>
       patient.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -30,13 +35,26 @@ export default function Dashboard() {
   );
 
   const pendingBills = bills.filter((bill) => bill.pendingAmount > 0);
-  const todayPatients = patients.filter(
-    (p) => p.registrationDate === format(new Date(), "yyyy-MM-dd")
+  
+  // Get today's date string
+  const todayDate = format(new Date(), "yyyy-MM-dd");
+  
+  // Get unique patient IDs from today's visits
+  const patientIdsWithTodayVisits = new Set(
+    visits
+      .filter((v) => v.date === todayDate)
+      .map((v) => v.patientId)
   );
+  
+  // Include patients registered today OR with visits today
+  const todayPatients = patients.filter(
+    (p) => p.registrationDate === todayDate || patientIdsWithTodayVisits.has(p.id)
+  );
+  
   const totalRevenue = bills.reduce((sum, bill) => sum + bill.grandTotal, 0);
   
   // Today's bills calculations
-  const todayBills = bills.filter((bill) => bill.date === format(new Date(), "yyyy-MM-dd"));
+  const todayBills = bills.filter((bill) => bill.date === todayDate);
   const todayPaidRevenue = todayBills.reduce((sum, bill) => sum + bill.amountPaid, 0);
   const todayPendingAmount = todayBills.reduce((sum, bill) => sum + bill.pendingAmount, 0);
 
@@ -165,7 +183,7 @@ export default function Dashboard() {
               Today's Patients ({todayPatients.length})
             </CardTitle>
             <p className="text-sm text-muted-foreground mt-2">
-              Patients registered today - {format(new Date(), "dd MMMM yyyy")}
+              Patients registered or visited today - {format(new Date(), "dd MMMM yyyy")}
             </p>
           </CardHeader>
           <CardContent>
@@ -174,7 +192,12 @@ export default function Dashboard() {
                 const patientTodayBills = bills.filter(
                   (b) =>
                     b.patientId === patient.id &&
-                    b.date === format(new Date(), "yyyy-MM-dd")
+                    b.date === todayDate
+                );
+                const patientTodayVisits = visits.filter(
+                  (v) =>
+                    v.patientId === patient.id &&
+                    v.date === todayDate
                 );
                 const todayTotal = patientTodayBills.reduce((sum, b) => sum + b.grandTotal, 0);
                 const todayPaid = patientTodayBills.reduce((sum, b) => sum + b.amountPaid, 0);
@@ -194,15 +217,29 @@ export default function Dashboard() {
                               <Phone className="w-3 h-3" />
                               {patient.phone}
                             </div>
+                            {patientTodayVisits.length > 0 && (
+                              <div className="text-xs text-blue-600 mt-1">
+                                Visit: {patientTodayVisits[0].diagnosis}
+                              </div>
+                            )}
                           </div>
                         </div>
                         <div className="text-right">
-                          {patientTodayBills.length > 0 ? (
-                            <div className="space-y-1">
+                          <div className="space-y-1">
+                            {patientTodayVisits.length > 0 && (
+                              <div className="text-sm">
+                                <Badge variant="secondary" className="bg-blue-100 text-blue-800">
+                                  Visit({patientTodayVisits.length})
+                                </Badge>
+                              </div>
+                            )}
+                            {patientTodayBills.length > 0 ? (
                               <div className="text-sm">
                                 <span className="text-muted-foreground">Bills:</span>{" "}
                                 <span className="font-semibold">{patientTodayBills.length}</span>
                               </div>
+                            ) : null}
+                            {patientTodayBills.length > 0 && (
                               <div className="text-sm">
                                 <span className="text-green-600 font-semibold">₹{todayPaid.toLocaleString()}</span>
                                 {todayPending > 0 && (
@@ -211,10 +248,11 @@ export default function Dashboard() {
                                   </span>
                                 )}
                               </div>
-                            </div>
-                          ) : (
-                            <div className="text-sm text-muted-foreground">No bills today</div>
-                          )}
+                            )}
+                            {patientTodayBills.length === 0 && patientTodayVisits.length > 0 && (
+                              <div className="text-xs text-muted-foreground">No bills yet</div>
+                            )}
+                          </div>
                         </div>
                         <ChevronRight className="w-5 h-5 text-muted-foreground ml-4" />
                       </div>
