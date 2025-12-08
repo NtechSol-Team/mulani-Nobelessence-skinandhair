@@ -22,6 +22,7 @@ import {
   AlertCircle,
   Check,
   Phone,
+  Printer,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -305,16 +306,177 @@ export default function BillingManage() {
     )
     .slice(0, 15);
 
+  const handlePrintBill = (bill: Bill) => {
+    const printContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+      <meta charset="UTF-8">
+      <title>Bill - ${bill.id}</title>
+      <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: white; }
+        .container { max-width: 800px; margin: 0 auto; padding: 20px; }
+        .header { text-align: center; margin-bottom: 30px; border-bottom: 3px solid #1e40af; padding-bottom: 20px; }
+        .logo { width: 80px; height: 80px; margin: 0 auto 15px; }
+        .logo img { width: 100%; height: 100%; object-fit: contain; }
+        .clinic-name { font-size: 28px; font-weight: bold; color: #1e40af; margin-bottom: 5px; }
+        .clinic-tag { font-size: 14px; color: #666; font-style: italic; }
+        .bill-info { display: flex; justify-content: space-between; margin-bottom: 20px; font-size: 14px; }
+        .bill-info-col { flex: 1; }
+        .bill-info-col strong { color: #1e40af; }
+        .section-title { font-size: 16px; font-weight: bold; color: #1e40af; margin-top: 20px; margin-bottom: 10px; border-bottom: 2px solid #e0e7ff; padding-bottom: 5px; }
+        .patient-details { margin-bottom: 20px; font-size: 14px; }
+        .patient-details p { margin-bottom: 5px; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+        th { background-color: #1e40af; color: white; padding: 12px; text-align: left; font-weight: bold; }
+        td { padding: 12px; border-bottom: 1px solid #e5e7eb; font-size: 14px; }
+        tr:nth-child(even) { background-color: #f9fafb; }
+        .text-right { text-align: right; }
+        .totals { margin-top: 20px; margin-bottom: 20px; }
+        .total-row { display: flex; justify-content: space-between; padding: 10px 0; font-size: 15px; }
+        .total-row.grand { font-size: 18px; font-weight: bold; color: #1e40af; border-top: 2px solid #1e40af; border-bottom: 2px solid #1e40af; padding: 15px 0; margin: 15px 0; }
+        .total-row.paid { color: #16a34a; }
+        .total-row.pending { color: #dc2626; }
+        .status-box { margin-top: 20px; padding: 15px; border-radius: 8px; text-align: center; font-size: 14px; }
+        .status-settled { background-color: #dcfce7; border: 2px solid #16a34a; color: #166534; }
+        .status-pending { background-color: #fee2e2; border: 2px solid #dc2626; color: #991b1b; }
+        .footer { text-align: center; margin-top: 30px; padding-top: 20px; border-top: 2px solid #e5e7eb; font-size: 12px; color: #666; }
+        .print-date { text-align: center; font-size: 12px; color: #999; margin-top: 10px; }
+        @media print {
+        body { margin: 0; padding: 0; }
+        .container { padding: 0; }
+        .no-print { display: none; }
+        }
+      </style>
+      </head>
+      <body>
+      <div class="container">
+        <div class="header">
+        <div class="logo">
+          <img src="/logo.png" alt="Prime Care Logo" />
+        </div>
+        <div class="clinic-name">PRIME CARE CLINIC</div>
+        <div class="clinic-tag">Professional Healthcare Management System</div>
+        </div>
+
+        <div class="bill-info">
+        <div class="bill-info-col">
+          <p><strong>Bill ID:</strong> ${bill.id}</p>
+          <p><strong>Date:</strong> ${format(new Date(bill.date), "dd MMM yyyy")}</p>
+        </div>
+        <div class="bill-info-col">
+          <p><strong>Invoice Type:</strong> Medical Bill</p>
+          <p><strong>Status:</strong> ${bill.pendingAmount > 0 ? "PENDING" : "SETTLED"}</p>
+        </div>
+        </div>
+
+        <div class="patient-details">
+        <div class="section-title">Patient Information</div>
+        <p><strong>Patient Name:</strong> ${bill.patientName}</p>
+        </div>
+
+        <div class="section-title">Services Provided</div>
+        <table>
+        <thead>
+          <tr>
+          <th>Description</th>
+          <th>Type</th>
+          <th class="text-right">Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${bill.treatments.map(t => `
+          <tr>
+            <td>${t.treatmentName}</td>
+            <td>Treatment</td>
+            <td class="text-right">₹${t.price.toFixed(2)}</td>
+          </tr>
+          `).join("")}
+          ${bill.medicines.map(m => `
+          <tr>
+            <td>${m.medicineName}</td>
+            <td>Medicine (${m.quantity}x)</td>
+            <td class="text-right">₹${m.total.toFixed(2)}</td>
+          </tr>
+          `).join("")}
+        </tbody>
+        </table>
+
+        <div class="totals">
+        <div class="total-row">
+          <span>Treatment Total:</span>
+          <span>₹${bill.treatmentTotal.toFixed(2)}</span>
+        </div>
+        <div class="total-row">
+          <span>Medicine Total:</span>
+          <span>₹${bill.medicineTotal.toFixed(2)}</span>
+        </div>
+        <div class="total-row grand">
+          <span>GRAND TOTAL:</span>
+          <span>₹${bill.grandTotal.toFixed(2)}</span>
+        </div>
+        <div class="total-row paid">
+          <span>Amount Paid:</span>
+          <span>₹${bill.amountPaid.toFixed(2)}</span>
+        </div>
+        ${bill.pendingAmount > 0 ? `
+          <div class="total-row pending">
+          <span>AMOUNT PENDING:</span>
+          <span>₹${bill.pendingAmount.toFixed(2)}</span>
+          </div>
+        ` : ""}
+        </div>
+
+        ${bill.pendingAmount === 0 ? `
+        <div class="status-box status-settled">
+          ✓ BILL FULLY SETTLED - Thank you for your payment
+        </div>
+        ` : `
+        <div class="status-box status-pending">
+          ⚠ PAYMENT PENDING - Amount Due: ₹${bill.pendingAmount.toFixed(2)}
+        </div>
+        `}
+
+        <div class="footer">
+        <p>Thank you for choosing Prime Care Clinic</p>
+        <p>For queries, please contact us during business hours</p>
+        </div>
+
+        <div class="print-date">
+        Printed on: ${format(new Date(), "dd MMM yyyy HH:mm:ss")}
+        </div>
+      </div>
+
+      <script>
+        window.onload = function() {
+        window.print();
+        setTimeout(() => window.close(), 500);
+        };
+      </script>
+      </body>
+      </html>
+    `;
+
+    const printWindow = window.open("", "", "width=900,height=1000");
+    if (printWindow) {
+      printWindow.document.write(printContent);
+      printWindow.document.close();
+    }
+  };
+
   const BillCard = ({
     bill,
     onPayment,
     onEdit,
     onDelete,
+    onPrint,
   }: {
     bill: Bill;
     onPayment: (bill: Bill) => void;
     onEdit: (bill: Bill) => void;
     onDelete: (bill: Bill) => void;
+    onPrint: (bill: Bill) => void;
   }) => (
     <div className="p-4 border rounded-lg space-y-3 hover-elevate">
       <div className="flex items-start justify-between gap-2">
@@ -366,6 +528,15 @@ export default function BillingManage() {
       </div>
 
       <div className="flex gap-2">
+        <Button
+          size="sm"
+          variant="outline"
+          className="flex-1 text-blue-600 border-blue-200 hover:bg-blue-50"
+          onClick={() => onPrint(bill)}
+        >
+          <Printer className="w-4 h-4 mr-1" />
+          Print Bill
+        </Button>
         {bill.pendingAmount > 0 && (
           <Button
             size="sm"
@@ -483,6 +654,7 @@ export default function BillingManage() {
                     }}
                     onEdit={openEditBillDialog}
                     onDelete={(b) => setBillToDelete(b)}
+                    onPrint={handlePrintBill}
                   />
                 ))}
               </div>
@@ -529,6 +701,7 @@ export default function BillingManage() {
                     }}
                     onEdit={openEditBillDialog}
                     onDelete={(b) => setBillToDelete(b)}
+                    onPrint={handlePrintBill}
                   />
                 ))}
               </div>

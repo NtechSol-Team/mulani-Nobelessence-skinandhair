@@ -157,6 +157,76 @@ export default function Dashboard() {
         </Card>
       </div>
 
+      {todayPatients.length > 0 && (
+        <Card>
+          <CardHeader className="pb-4">
+            <CardTitle className="text-lg font-medium flex items-center gap-2">
+              <Calendar className="w-5 h-5 text-blue-600" />
+              Today's Patients ({todayPatients.length})
+            </CardTitle>
+            <p className="text-sm text-muted-foreground mt-2">
+              Patients registered today - {format(new Date(), "dd MMMM yyyy")}
+            </p>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              {todayPatients.map((patient) => {
+                const patientTodayBills = bills.filter(
+                  (b) =>
+                    b.patientId === patient.id &&
+                    b.date === format(new Date(), "yyyy-MM-dd")
+                );
+                const todayTotal = patientTodayBills.reduce((sum, b) => sum + b.grandTotal, 0);
+                const todayPaid = patientTodayBills.reduce((sum, b) => sum + b.amountPaid, 0);
+                const todayPending = patientTodayBills.reduce((sum, b) => sum + b.pendingAmount, 0);
+
+                return (
+                  <Link key={patient.id} href={`/patient/${patient.id}`} className="block">
+                    <div className="p-4 rounded-lg border bg-gradient-to-r from-blue-50 to-cyan-50 hover:shadow-md transition-all cursor-pointer">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-4 flex-1">
+                          <div className="flex items-center justify-center w-10 h-10 rounded-full bg-blue-600 text-white font-medium">
+                            {patient.name.charAt(0).toUpperCase()}
+                          </div>
+                          <div className="flex-1">
+                            <div className="font-medium text-lg">{patient.name}</div>
+                            <div className="text-sm text-muted-foreground flex items-center gap-2">
+                              <Phone className="w-3 h-3" />
+                              {patient.phone}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          {patientTodayBills.length > 0 ? (
+                            <div className="space-y-1">
+                              <div className="text-sm">
+                                <span className="text-muted-foreground">Bills:</span>{" "}
+                                <span className="font-semibold">{patientTodayBills.length}</span>
+                              </div>
+                              <div className="text-sm">
+                                <span className="text-green-600 font-semibold">₹{todayPaid.toLocaleString()}</span>
+                                {todayPending > 0 && (
+                                  <span className="text-red-600 font-semibold ml-2">
+                                    Pending: ₹{todayPending.toLocaleString()}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="text-sm text-muted-foreground">No bills today</div>
+                          )}
+                        </div>
+                        <ChevronRight className="w-5 h-5 text-muted-foreground ml-4" />
+                      </div>
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardHeader className="pb-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
