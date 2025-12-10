@@ -64,6 +64,8 @@ export default function BillingManage() {
   const [isPaymentDialogOpen, setIsPaymentDialogOpen] = useState(false);
   const [selectedBillForPayment, setSelectedBillForPayment] = useState<Bill | null>(null);
   const [paymentDialogAmount, setPaymentDialogAmount] = useState("");
+  const [isEditingPaidAmount, setIsEditingPaidAmount] = useState(false);
+  const [editedPaidAmount, setEditedPaidAmount] = useState("");
   const [billToDelete, setBillToDelete] = useState<Bill | null>(null);
   const [billToEdit, setBillToEdit] = useState<Bill | null>(null);
   const [isEditBillDialogOpen, setIsEditBillDialogOpen] = useState(false);
@@ -89,10 +91,12 @@ export default function BillingManage() {
   const treatments = extractPaginatedData<Treatment>(treatmentsResponse);
 
   const adjustPaymentMutation = useMutation({
-    mutationFn: async ({ billId, addAmount }: { billId: string; addAmount: number }) => {
-      return await apiRequest("PATCH", `/api/bills/${billId}/payment`, {
-        addAmount,
-      });
+    mutationFn: async ({ billId, addAmount, setAmount }: { billId: string; addAmount?: number; setAmount?: number }) => {
+      // send whichever param is provided (setAmount takes precedence)
+      const body: Record<string, any> = {};
+      if (typeof setAmount === "number") body.setAmount = setAmount;
+      else if (typeof addAmount === "number") body.addAmount = addAmount;
+      return await apiRequest("PATCH", `/api/bills/${billId}/payment`, body);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/bills"] });
@@ -647,11 +651,13 @@ export default function BillingManage() {
                   <BillCard
                     key={bill.id}
                     bill={bill}
-                    onPayment={(b) => {
-                      setSelectedBillForPayment(b);
-                      setPaymentDialogAmount("");
-                      setIsPaymentDialogOpen(true);
-                    }}
+                      onPayment={(b) => {
+                        setSelectedBillForPayment(b);
+                        setPaymentDialogAmount("");
+                        setIsEditingPaidAmount(false);
+                        setEditedPaidAmount("");
+                        setIsPaymentDialogOpen(true);
+                      }}
                     onEdit={openEditBillDialog}
                     onDelete={(b) => setBillToDelete(b)}
                     onPrint={handlePrintBill}
@@ -697,6 +703,8 @@ export default function BillingManage() {
                     onPayment={(b) => {
                       setSelectedBillForPayment(b);
                       setPaymentDialogAmount("");
+                      setIsEditingPaidAmount(false);
+                      setEditedPaidAmount("");
                       setIsPaymentDialogOpen(true);
                     }}
                     onEdit={openEditBillDialog}
@@ -711,7 +719,15 @@ export default function BillingManage() {
       </div>
 
       {/* Payment Dialog */}
-      <Dialog open={isPaymentDialogOpen} onOpenChange={setIsPaymentDialogOpen}>
+      <Dialog open={isPaymentDialogOpen} onOpenChange={(open) => {
+        setIsPaymentDialogOpen(open);
+        if (!open) {
+          setIsEditingPaidAmount(false);
+          setEditedPaidAmount("");
+          setPaymentDialogAmount("");
+          setSelectedBillForPayment(null);
+        }
+      }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Record Payment</DialogTitle>
@@ -735,37 +751,91 @@ export default function BillingManage() {
               </div>
 
               <div>
-                <label className="text-sm font-medium mb-2 block">
-                  Add Amount
-                  <span className="text-xs text-muted-foreground ml-2">(this payment)</span>
+                <label className="flex items-center gap-2 text-sm mb-2">
+                  <input
+                    type="checkbox"
+                    checked={isEditingPaidAmount}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setIsEditingPaidAmount(checked);
+                      if (checked && selectedBillForPayment) {
+                        setEditedPaidAmount(selectedBillForPayment.amountPaid.toString());
+                      } else {
+                        setEditedPaidAmount("");
+                      }
+                    }}
+                  />
+                  <span className="font-medium">Edit Already Paid Amount (overwrite)</span>
                 </label>
-                <Input
-                  type="number"
-                  min="0"
-                  max={selectedBillForPayment.pendingAmount}
-                  value={paymentDialogAmount}
-                  onChange={(e) => setPaymentDialogAmount(e.target.value)}
-                  placeholder="0"
-                  className="text-lg"
-                />
-                <p className="text-xs text-muted-foreground mt-2">
-                  Enter only the amount being paid in this transaction. The system will add it to previous payments.
-                </p>
+
+                {isEditingPaidAmount ? (
+                  <>
+                    <label className="text-sm font-medium mb-2 block">New Paid Total</label>
+                    <Input
+                      type="number"
+                      min="0"
+                      max={selectedBillForPayment?.grandTotal}
+                      value={editedPaidAmount}
+                      onChange={(e) => setEditedPaidAmount(e.target.value)}
+                      placeholder="0"
+                      className="text-lg"
+                    />
+                    <p className="text-xs text-muted-foreground mt-2">
+                      Overwrites the cumulative paid amount for this bill. Use this to correct mistakes.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <label className="text-sm font-medium mb-2 block">
+                      Add Amount
+                      <span className="text-xs text-muted-foreground ml-2">(this payment)</span>
+                    </label>
+                    <Input
+                      type="number"
+                      min="0"
+                      max={selectedBillForPayment?.pendingAmount}
+                      value={paymentDialogAmount}
+                      onChange={(e) => setPaymentDialogAmount(e.target.value)}
+                      placeholder="0"
+                      className="text-lg"
+                    />
+                    <p className="text-xs text-muted-foreground mt-2">
+                      Enter only the amount being paid in this transaction. The system will add it to previous payments.
+                    </p>
+                  </>
+                )}
               </div>
 
-              {paymentDialogAmount && (
+              {(paymentDialogAmount || isEditingPaidAmount) && (
                 <div className="p-3 bg-blue-50 dark:bg-blue-950 rounded-lg space-y-1 text-sm border border-blue-200 dark:border-blue-800">
-                  <div className="text-xs font-semibold text-blue-900 dark:text-blue-100 mb-2">AFTER THIS PAYMENT:</div>
-                  <div className="flex justify-between">
-                    <span>Total Paid:</span>
-                    <span className="font-medium text-green-600">₹{(selectedBillForPayment.amountPaid + parseFloat(paymentDialogAmount)).toFixed(2)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Remaining Pending:</span>
-                    <span className={`font-medium ${(selectedBillForPayment.pendingAmount - parseFloat(paymentDialogAmount)) > 0 ? 'text-destructive' : 'text-green-600'}`}>
-                      ₹{(selectedBillForPayment.pendingAmount - parseFloat(paymentDialogAmount)).toFixed(2)}
-                    </span>
-                  </div>
+                  <div className="text-xs font-semibold text-blue-900 dark:text-blue-100 mb-2">AFTER THIS ACTION:</div>
+                  {isEditingPaidAmount ? (
+                    <>
+                      <div className="flex justify-between">
+                        <span>New Total Paid:</span>
+                        <span className="font-medium text-green-600">₹{(parseFloat(editedPaidAmount || '0')).toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Remaining Pending:</span>
+                        <span className={`font-medium ${((selectedBillForPayment?.grandTotal || 0) - (parseFloat(editedPaidAmount || '0'))) > 0 ? 'text-destructive' : 'text-green-600'}`}>
+                          ₹{(((selectedBillForPayment?.grandTotal || 0) - (parseFloat(editedPaidAmount || '0')))).toFixed(2)}
+                        </span>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="flex justify-between">
+                        <span>Total Paid:</span>
+                        <span className="font-medium text-green-600">₹{(selectedBillForPayment.amountPaid + parseFloat(paymentDialogAmount || '0')).toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Remaining Pending:</span>
+                        <span className={`font-medium ${(selectedBillForPayment.pendingAmount - parseFloat(paymentDialogAmount || '0')) > 0 ? 'text-destructive' : 'text-green-600'}`}>
+                          ₹{(selectedBillForPayment.pendingAmount - parseFloat(paymentDialogAmount || '0')).toFixed(2)}
+                        </span>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
 
@@ -774,29 +844,47 @@ export default function BillingManage() {
                   Cancel
                 </Button>
                 <Button
-                  disabled={adjustPaymentMutation.isPending || !paymentDialogAmount}
+                  disabled={adjustPaymentMutation.isPending || (!isEditingPaidAmount && !paymentDialogAmount) || (isEditingPaidAmount && !editedPaidAmount)}
                   onClick={() => {
-                    const addAmount = parseFloat(paymentDialogAmount) || 0;
-                    if (addAmount <= 0) {
-                      toast({
-                        title: "Invalid Amount",
-                        description: "Please enter an amount greater than 0",
-                        variant: "destructive",
+                    if (!selectedBillForPayment) return;
+
+                    if (isEditingPaidAmount) {
+                      const setAmount = parseFloat(editedPaidAmount) || 0;
+                      if (setAmount < 0 || setAmount > selectedBillForPayment.grandTotal) {
+                        toast({
+                          title: "Invalid Amount",
+                          description: `Please enter a value between 0 and ₹${selectedBillForPayment.grandTotal.toFixed(2)}`,
+                          variant: "destructive",
+                        });
+                        return;
+                      }
+                      adjustPaymentMutation.mutate({
+                        billId: selectedBillForPayment.id,
+                        setAmount,
                       });
-                      return;
-                    }
-                    if (addAmount > selectedBillForPayment.pendingAmount) {
-                      toast({
-                        title: "Amount Exceeds Pending",
-                        description: `Only ₹${selectedBillForPayment.pendingAmount.toFixed(2)} pending on this bill`,
-                        variant: "destructive",
+                    } else {
+                      const addAmount = parseFloat(paymentDialogAmount) || 0;
+                      if (addAmount <= 0) {
+                        toast({
+                          title: "Invalid Amount",
+                          description: "Please enter an amount greater than 0",
+                          variant: "destructive",
+                        });
+                        return;
+                      }
+                      if (addAmount > selectedBillForPayment.pendingAmount) {
+                        toast({
+                          title: "Amount Exceeds Pending",
+                          description: `Only ₹${selectedBillForPayment.pendingAmount.toFixed(2)} pending on this bill`,
+                          variant: "destructive",
+                        });
+                        return;
+                      }
+                      adjustPaymentMutation.mutate({
+                        billId: selectedBillForPayment.id,
+                        addAmount,
                       });
-                      return;
                     }
-                    adjustPaymentMutation.mutate({
-                      billId: selectedBillForPayment.id,
-                      addAmount,
-                    });
                   }}
                 >
                   {adjustPaymentMutation.isPending ? "Saving..." : "Record Payment"}

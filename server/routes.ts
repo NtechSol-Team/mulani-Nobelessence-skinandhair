@@ -379,25 +379,44 @@ export async function registerRoutes(
 
   app.patch("/api/bills/:id/payment", async (req, res) => {
     try {
-      const { addAmount } = req.body;
-      if (typeof addAmount !== "number" || addAmount < 0) {
-        return res.status(400).json({ error: "Invalid payment amount" });
+      const { addAmount, setAmount } = req.body;
+
+      // Validate incoming numeric values if present
+      if (typeof addAmount !== "undefined" && typeof addAmount !== "number") {
+        return res.status(400).json({ error: "Invalid addAmount" });
       }
-      
+      if (typeof setAmount !== "undefined" && typeof setAmount !== "number") {
+        return res.status(400).json({ error: "Invalid setAmount" });
+      }
+
       // Get current bill to calculate new total
       const currentBill = await storage.getBill(req.params.id);
       if (!currentBill) {
         return res.status(404).json({ error: "Bill not found" });
       }
 
-      // Calculate new total paid and validate
-      const newTotalPaid = currentBill.amountPaid + addAmount;
-      if (newTotalPaid > currentBill.grandTotal) {
-        return res.status(400).json({ 
-          error: `Cannot exceed bill amount. Remaining: ₹${(currentBill.grandTotal - currentBill.amountPaid).toFixed(2)}` 
-        });
+      let newTotalPaid: number;
+
+      // If setAmount is provided, use it as the absolute paid total (allow correcting mistakes)
+      if (typeof setAmount === "number") {
+        if (setAmount < 0 || setAmount > currentBill.grandTotal) {
+          return res.status(400).json({ error: "setAmount must be between 0 and bill total" });
+        }
+        newTotalPaid = setAmount;
+      } else {
+        // Otherwise use additive flow (existing behavior)
+        const add = typeof addAmount === "number" ? addAmount : undefined;
+        if (typeof add === "undefined" || add < 0) {
+          return res.status(400).json({ error: "Invalid payment amount" });
+        }
+        newTotalPaid = currentBill.amountPaid + add;
+        if (newTotalPaid > currentBill.grandTotal) {
+          return res.status(400).json({ 
+            error: `Cannot exceed bill amount. Remaining: ₹${(currentBill.grandTotal - currentBill.amountPaid).toFixed(2)}` 
+          });
+        }
       }
-      
+
       const bill = await storage.updateBillPayment(req.params.id, newTotalPaid);
       if (!bill) {
         return res.status(404).json({ error: "Bill not found" });
