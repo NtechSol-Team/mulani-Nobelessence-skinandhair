@@ -154,14 +154,14 @@ type DbAppointmentRow = {
 
 const createTableStatements = [
   `CREATE TABLE IF NOT EXISTS patients (
-    id TEXT PRIMARY KEY,
+    id UUID PRIMARY KEY,
     name TEXT NOT NULL,
     phone TEXT NOT NULL,
     registration_date TEXT NOT NULL
   )`,
   `CREATE TABLE IF NOT EXISTS visits (
-    id TEXT PRIMARY KEY,
-    patient_id TEXT REFERENCES patients(id) ON DELETE CASCADE,
+    id UUID PRIMARY KEY,
+    patient_id UUID REFERENCES patients(id) ON DELETE CASCADE,
     date TEXT NOT NULL,
     complaints TEXT NOT NULL,
     diagnosis TEXT NOT NULL,
@@ -170,20 +170,20 @@ const createTableStatements = [
   )`,
   `CREATE INDEX IF NOT EXISTS visits_patient_idx ON visits(patient_id)`,
   `CREATE TABLE IF NOT EXISTS medicines (
-    id TEXT PRIMARY KEY,
+    id UUID PRIMARY KEY,
     name TEXT NOT NULL,
     purchase_cost DOUBLE PRECISION NOT NULL,
     selling_price DOUBLE PRECISION NOT NULL,
     quantity INTEGER NOT NULL
   )`,
   `CREATE TABLE IF NOT EXISTS treatments (
-    id TEXT PRIMARY KEY,
+    id UUID PRIMARY KEY,
     name TEXT NOT NULL,
     default_price DOUBLE PRECISION NOT NULL
   )`,
   `CREATE TABLE IF NOT EXISTS bills (
-    id TEXT PRIMARY KEY,
-    patient_id TEXT REFERENCES patients(id) ON DELETE CASCADE,
+    id UUID PRIMARY KEY,
+    patient_id UUID REFERENCES patients(id) ON DELETE CASCADE,
     patient_name TEXT NOT NULL,
     date TEXT NOT NULL,
     treatments JSONB NOT NULL,
@@ -196,15 +196,15 @@ const createTableStatements = [
   )`,
   `CREATE INDEX IF NOT EXISTS bills_patient_idx ON bills(patient_id)`,
   `CREATE TABLE IF NOT EXISTS expenses (
-    id TEXT PRIMARY KEY,
+    id UUID PRIMARY KEY,
     description TEXT NOT NULL,
     amount DOUBLE PRECISION NOT NULL,
     date TEXT NOT NULL,
     category TEXT NOT NULL
   )`,
   `CREATE TABLE IF NOT EXISTS appointments (
-    id TEXT PRIMARY KEY,
-    patient_id TEXT REFERENCES patients(id) ON DELETE CASCADE,
+    id UUID PRIMARY KEY,
+    patient_id UUID REFERENCES patients(id) ON DELETE CASCADE,
     date TEXT NOT NULL,
     reason TEXT NOT NULL,
     status TEXT NOT NULL
