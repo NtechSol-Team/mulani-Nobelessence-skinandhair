@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Receipt,
@@ -46,6 +46,26 @@ export default function BillingCreate() {
   });
   const patients = extractPaginatedData<Patient>(patientsResponse);
 
+  // Handle patient pre-selection from URL or Session Storage and clear it
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    let patientId = params.get("patientId");
+
+    // Check session storage if not in URL
+    if (!patientId) {
+      patientId = sessionStorage.getItem("preselectedPatientId");
+    }
+
+    if (patientId && patients.length > 0 && !selectedPatient) {
+      const patient = patients.find(p => String(p.id) === patientId);
+      if (patient) {
+        setSelectedPatient(patient);
+        // Clear session storage to prevent persistence
+        sessionStorage.removeItem("preselectedPatientId");
+      }
+    }
+  }, [patients, selectedPatient]);
+
   const { data: medicinesResponse } = useQuery({
     queryKey: ["/api/medicines"],
   });
@@ -90,6 +110,8 @@ export default function BillingCreate() {
         description: "Bill has been saved successfully.",
       });
       resetForm();
+      // Force page reload as requested
+      window.location.reload();
     },
     onError: (error: Error) => {
       toast({

@@ -268,10 +268,10 @@ export default function BillingManage() {
   const today = new Date();
   const monthStart = startOfMonth(today);
   const monthEnd = endOfMonth(today);
-  
+
   let dateRangeStart = monthStart;
   let dateRangeEnd = monthEnd;
-  
+
   if (dateFilter === "current-month") {
     dateRangeStart = monthStart;
     dateRangeEnd = monthEnd;
@@ -358,9 +358,9 @@ export default function BillingManage() {
       <div class="container">
         <div class="header">
         <div class="logo">
-          <img src="/logo.png" alt="Prime Care Logo" />
+          <img src="/logo.png" alt="Clinic Care Logo" />
         </div>
-        <div class="clinic-name">PRIME CARE CLINIC</div>
+        <div class="clinic-name">CLINIC CARE</div>
         <div class="clinic-tag">Professional Healthcare Management System</div>
         </div>
 
@@ -443,7 +443,7 @@ export default function BillingManage() {
         `}
 
         <div class="footer">
-        <p>Thank you for choosing Prime Care Clinic</p>
+        <p>Thank you for choosing Clinic Care</p>
         <p>For queries, please contact us during business hours</p>
         </div>
 
@@ -651,13 +651,13 @@ export default function BillingManage() {
                   <BillCard
                     key={bill.id}
                     bill={bill}
-                      onPayment={(b) => {
-                        setSelectedBillForPayment(b);
-                        setPaymentDialogAmount("");
-                        setIsEditingPaidAmount(false);
-                        setEditedPaidAmount("");
-                        setIsPaymentDialogOpen(true);
-                      }}
+                    onPayment={(b) => {
+                      setSelectedBillForPayment(b);
+                      setPaymentDialogAmount("");
+                      setIsEditingPaidAmount(false);
+                      setEditedPaidAmount("");
+                      setIsPaymentDialogOpen(true);
+                    }}
                     onEdit={openEditBillDialog}
                     onDelete={(b) => setBillToDelete(b)}
                     onPrint={handlePrintBill}

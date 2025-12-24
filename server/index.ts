@@ -4,9 +4,26 @@ import compression from "compression";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
-// session-based auth removed: express-session and connect-pg-simple imports removed
+import helmet from "helmet";
+import { setupAuth } from "./auth";
 
 const app = express();
+
+// Use Helmet for security headers
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"], // unsafe-eval needed for some dev tools/vite
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", "data:", "blob:"],
+        connectSrc: ["'self'", "ws:", "wss:"], // needed for HMR
+        fontSrc: ["'self'", "data:"],
+      },
+    },
+  })
+);
 
 // When running behind a proxy (e.g. Render, Heroku), enable trust proxy
 // so Express knows the original request protocol (https)
@@ -16,15 +33,6 @@ if (process.env.NODE_ENV === "production") {
 
 // Enable gzip compression for responses to reduce transfer size
 app.use(compression());
-const httpServer = createServer(app);
-
-// Session middleware removed — authentication/login has been removed intentionally.
-
-declare module "http" {
-  interface IncomingMessage {
-    rawBody: unknown;
-  }
-}
 
 app.use(
   express.json({
@@ -35,6 +43,17 @@ app.use(
 );
 
 app.use(express.urlencoded({ extended: false }));
+
+// Setup Authentication (Session + Passport)
+setupAuth(app);
+
+const httpServer = createServer(app);
+
+declare module "http" {
+  interface IncomingMessage {
+    rawBody: unknown;
+  }
+}
 
 // Configure CORS to allow requests from the frontend
 const clientOrigin = process.env.CLIENT_ORIGIN || (process.env.NODE_ENV === "production" ? "*" : "http://localhost:5173");

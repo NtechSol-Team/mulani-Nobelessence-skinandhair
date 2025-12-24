@@ -9,20 +9,24 @@ import {
   insertBillSchema,
   insertExpenseSchema,
   paymentAdjustmentSchema,
+  insertAppointmentSchema,
   paginationSchema,
   // registerSchema, loginSchema removed with auth
 } from "@shared/schema";
 import { z } from "zod";
 
+import { ensureAuthenticated } from "./auth";
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
-  // Authentication removed: login/logout/session endpoints and related session handling
-  // were removed intentionally. Authentication-related code used to live here.
+  // Protect all API routes registered below
+  // Note: /api/login and /api/logout are registered in setupAuth() before this function
+  app.use("/api", ensureAuthenticated);
 
   // ==================== PATIENTS ====================
-  
+
   app.get("/api/patients", async (req, res) => {
     try {
       const { limit, offset } = paginationSchema.parse(req.query);
@@ -79,8 +83,20 @@ export async function registerRoutes(
     }
   });
 
+  app.delete("/api/patients/:id", async (req, res) => {
+    try {
+      const deleted = await storage.deletePatient(req.params.id);
+      if (!deleted) {
+        return res.status(404).json({ error: "Patient not found" });
+      }
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete patient" });
+    }
+  });
+
   // ==================== VISITS ====================
-  
+
   app.get("/api/visits", async (req, res) => {
     try {
       const visits = await storage.getVisits();
@@ -129,7 +145,7 @@ export async function registerRoutes(
   });
 
   // ==================== MEDICINES ====================
-  
+
   app.get("/api/medicines", async (req, res) => {
     try {
       const { limit, offset } = paginationSchema.parse(req.query);
@@ -197,7 +213,7 @@ export async function registerRoutes(
   });
 
   // ==================== TREATMENTS ====================
-  
+
   app.get("/api/treatments", async (req, res) => {
     try {
       const { limit, offset } = paginationSchema.parse(req.query);
@@ -275,7 +291,7 @@ export async function registerRoutes(
   });
 
   // ==================== BILLS ====================
-  
+
   app.get("/api/bills", async (req, res) => {
     try {
       const { limit, offset } = paginationSchema.parse(req.query);
@@ -304,13 +320,13 @@ export async function registerRoutes(
   app.post("/api/bills", async (req, res) => {
     try {
       const validated = insertBillSchema.parse(req.body);
-      
+
       // Get patient name
       const patient = await storage.getPatient(validated.patientId);
       if (!patient) {
         return res.status(400).json({ error: "Patient not found" });
       }
-      
+
       // Reduce medicine stock (only if medicines exist)
       if (validated.medicines && validated.medicines.length > 0) {
         for (const med of validated.medicines) {
@@ -320,15 +336,15 @@ export async function registerRoutes(
               return res.status(400).json({ error: `Medicine with ID ${med.medicineId} not found` });
             }
             if (medicine.quantity < med.quantity) {
-              return res.status(400).json({ 
-                error: `Insufficient stock for ${med.medicineName}. Available: ${medicine.quantity}, Required: ${med.quantity}` 
+              return res.status(400).json({
+                error: `Insufficient stock for ${med.medicineName}. Available: ${medicine.quantity}, Required: ${med.quantity}`
               });
             }
             await storage.updateMedicineStock(med.medicineId, -med.quantity);
           }
         }
       }
-      
+
       const bill = await storage.createBill(validated, patient.name);
       res.status(201).json(bill);
     } catch (error) {
@@ -343,13 +359,13 @@ export async function registerRoutes(
   app.patch("/api/bills/:id", async (req, res) => {
     try {
       const validated = insertBillSchema.parse(req.body);
-      
+
       // Get patient name
       const patient = await storage.getPatient(validated.patientId);
       if (!patient) {
         return res.status(400).json({ error: "Patient not found" });
       }
-      
+
       // Get existing bill to restore medicine stock
       const existingBill = await storage.getBill(req.params.id);
       if (existingBill) {
@@ -358,12 +374,12 @@ export async function registerRoutes(
           await storage.updateMedicineStock(med.medicineId, med.quantity);
         }
       }
-      
+
       // Reduce medicine stock for new bill
       for (const med of validated.medicines) {
         await storage.updateMedicineStock(med.medicineId, -med.quantity);
       }
-      
+
       const bill = await storage.updateBill(req.params.id, validated, patient.name);
       if (!bill) {
         return res.status(404).json({ error: "Bill not found" });
@@ -411,8 +427,8 @@ export async function registerRoutes(
         }
         newTotalPaid = currentBill.amountPaid + add;
         if (newTotalPaid > currentBill.grandTotal) {
-          return res.status(400).json({ 
-            error: `Cannot exceed bill amount. Remaining: ₹${(currentBill.grandTotal - currentBill.amountPaid).toFixed(2)}` 
+          return res.status(400).json({
+            error: `Cannot exceed bill amount. Remaining: ₹${(currentBill.grandTotal - currentBill.amountPaid).toFixed(2)}`
           });
         }
       }
@@ -455,7 +471,7 @@ export async function registerRoutes(
   });
 
   // ==================== EXPENSES ====================
-  
+
   app.get("/api/expenses", async (req, res) => {
     try {
       const { limit, offset } = paginationSchema.parse(req.query);
@@ -519,6 +535,81 @@ export async function registerRoutes(
       res.status(204).send();
     } catch (error) {
       res.status(500).json({ error: "Failed to delete expense" });
+    }
+  });
+
+  // ==================== APPOINTMENTS ====================
+
+  app.get("/api/appointments", async (req, res) => {
+    try {
+      const appointments = await storage.getAppointments();
+      res.json(appointments);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch appointments" });
+    }
+  });
+
+  app.get("/api/appointments/patient/:patientId", async (req, res) => {
+    try {
+      const appointments = await storage.getAppointmentsByPatient(req.params.patientId);
+      res.json(appointments);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch appointments" });
+    }
+  });
+
+  app.get("/api/appointments/:id", async (req, res) => {
+    try {
+      const appointment = await storage.getAppointment(req.params.id);
+      if (!appointment) {
+        return res.status(404).json({ error: "Appointment not found" });
+      }
+      res.json(appointment);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch appointment" });
+    }
+  });
+
+  app.post("/api/appointments", async (req, res) => {
+    try {
+      console.log("Creating appointment with body:", req.body);
+      const validated = insertAppointmentSchema.parse(req.body);
+      const appointment = await storage.createAppointment(validated);
+      res.status(201).json(appointment);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        console.log("Validation error:", JSON.stringify(error.errors));
+        return res.status(400).json({ error: error.errors });
+      }
+      res.status(500).json({ error: "Failed to create appointment" });
+    }
+  });
+
+  app.patch("/api/appointments/:id", async (req, res) => {
+    try {
+      const validated = insertAppointmentSchema.parse(req.body);
+      const appointment = await storage.updateAppointment(req.params.id, validated);
+      if (!appointment) {
+        return res.status(404).json({ error: "Appointment not found" });
+      }
+      res.json(appointment);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors });
+      }
+      res.status(500).json({ error: "Failed to update appointment" });
+    }
+  });
+
+  app.delete("/api/appointments/:id", async (req, res) => {
+    try {
+      const deleted = await storage.deleteAppointment(req.params.id);
+      if (!deleted) {
+        return res.status(404).json({ error: "Appointment not found" });
+      }
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete appointment" });
     }
   });
 

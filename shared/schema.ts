@@ -205,3 +205,25 @@ export interface PaginatedResponse<T> {
   limit: number;
   offset: number;
 }
+
+// Appointment Schema
+export interface Appointment {
+  id: string;
+  patientId: string;
+  patientName?: string; // Optional, for display purposes
+  date: string;
+  time: string; // Time string like "14:30"
+  reason: string;
+  status: string; // "Scheduled", "Completed", "Cancelled"
+  isUpcoming: boolean; // Computed or stored
+}
+
+export const insertAppointmentSchema = z.object({
+  patientId: z.string().min(1, "Patient ID is required"),
+  date: z.string(),
+  time: z.string().default("09:00"),
+  reason: z.string().optional().default(""),
+  status: z.enum(["Scheduled", "Completed", "Cancelled"]).default("Scheduled"),
+});
+
+export type InsertAppointment = z.infer<typeof insertAppointmentSchema>;

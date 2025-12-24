@@ -14,7 +14,19 @@ import {
   Pencil,
   X,
   Check,
+  Trash2,
 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -60,6 +72,7 @@ export default function PatientDetails() {
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isEditingPatient, setIsEditingPatient] = useState(false);
   const [editingVisit, setEditingVisit] = useState<Visit | null>(null);
+  const [, setLocation] = useRoute("/patient/:id"); // Used for navigation after delete
 
   const { data: patient, isLoading: patientLoading } = useQuery<Patient>({
     queryKey: ["/api/patients", patientId],
@@ -168,6 +181,30 @@ export default function PatientDetails() {
     onError: (error: Error) => {
       toast({
         title: "Failed to Update Visit",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deletePatientMutation = useMutation({
+    mutationFn: async () => {
+      return await apiRequest("DELETE", `/api/patients/${patientId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/patients"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/bills"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/visits"] });
+
+      toast({
+        title: "Patient Deleted",
+        description: "Patient and all associated records have been deleted.",
+      });
+      window.location.href = "/";
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Failed to Delete Patient",
         description: error.message,
         variant: "destructive",
       });
@@ -318,6 +355,40 @@ export default function PatientDetails() {
                 >
                   <Pencil className="w-4 h-4" />
                 </Button>
+
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                      data-testid="button-delete-patient"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        This action cannot be undone. This will permanently delete the patient
+                        <strong> {patient?.name}</strong> and all their associated visits,
+                        bills, and records from the database.
+                        <br /><br />
+                        Any paid amounts will also be removed from revenue reports.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogAction
+                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                        onClick={() => deletePatientMutation.mutate()}
+                      >
+                        {deletePatientMutation.isPending ? "Deleting..." : "Delete Patient"}
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
               </div>
               <div className="flex items-center gap-3 text-muted-foreground text-sm mt-2">
                 <span className="flex items-center gap-1">
@@ -447,7 +518,7 @@ export default function PatientDetails() {
                   data-testid={`card-visit-${visit.id}`}
                 >
                   <div className="absolute -left-[9px] top-0 w-4 h-4 rounded-full bg-primary border-4 border-background" />
-                  
+
                   <div className="space-y-3">
                     <div className="flex items-center justify-between gap-3 flex-wrap">
                       <div className="flex items-center gap-3 flex-wrap">
@@ -456,9 +527,9 @@ export default function PatientDetails() {
                         </span>
                         <Badge variant="secondary">
                           {sortedVisits.length - index === 1 ? "1st" :
-                           sortedVisits.length - index === 2 ? "2nd" :
-                           sortedVisits.length - index === 3 ? "3rd" :
-                           `${sortedVisits.length - index}th`} Visit
+                            sortedVisits.length - index === 2 ? "2nd" :
+                              sortedVisits.length - index === 3 ? "3rd" :
+                                `${sortedVisits.length - index}th`} Visit
                         </Badge>
                       </div>
                       <Button
