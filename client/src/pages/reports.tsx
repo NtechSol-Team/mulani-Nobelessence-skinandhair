@@ -79,7 +79,7 @@ export default function Reports() {
   // Calculate date range based on filter
   let dateRangeStart = monthStart;
   let dateRangeEnd = monthEnd;
-  
+
   if (dateFilter === "current-month") {
     dateRangeStart = monthStart;
     dateRangeEnd = monthEnd;
@@ -105,7 +105,14 @@ export default function Reports() {
     isWithinInterval(new Date(e.date), { start: dateRangeStart, end: dateRangeEnd })
   );
 
-  const thisMonthRevenue = thisMonthBills.reduce((sum, b) => sum + b.grandTotal, 0);
+  const thisMonthRevenue = thisMonthBills.reduce(
+    (sum, b) => sum + (b.finalAmount || b.grandTotal),
+    0
+  );
+  const thisMonthDiscount = thisMonthBills.reduce(
+    (sum, b) => sum + (b.discount > 0 ? b.grandTotal - b.finalAmount : 0),
+    0
+  );
   const thisMonthTreatmentRevenue = thisMonthBills.reduce(
     (sum, b) => sum + b.treatmentTotal,
     0
@@ -150,7 +157,7 @@ export default function Reports() {
       isWithinInterval(new Date(e.date), { start, end })
     );
 
-    const revenue = monthBills.reduce((sum, b) => sum + b.grandTotal, 0);
+    const revenue = monthBills.reduce((sum, b) => sum + (b.finalAmount || b.grandTotal), 0);
     const expenseTotal = monthExpenses.reduce((sum, e) => sum + e.amount, 0);
 
     return {
@@ -261,15 +268,35 @@ export default function Reports() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
+              Total Discounts
+            </CardTitle>
+            <IndianRupee className="w-4 h-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold" data-testid="text-total-discount">
+              {isLoading ? (
+                <Skeleton className="h-8 w-24" />
+              ) : (
+                `₹${thisMonthDiscount.toLocaleString()}`
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              Given this period
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
               Net Profit
             </CardTitle>
             <IndianRupee className="w-4 h-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div
-              className={`text-2xl font-bold ${
-                totalProfit >= 0 ? "text-primary" : "text-destructive"
-              }`}
+              className={`text-2xl font-bold ${totalProfit >= 0 ? "text-primary" : "text-destructive"
+                }`}
               data-testid="text-net-profit"
             >
               {isLoading ? (

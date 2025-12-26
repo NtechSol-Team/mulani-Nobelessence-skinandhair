@@ -39,6 +39,7 @@ export default function BillingCreate() {
 
   const [selectedTreatments, setSelectedTreatments] = useState<BillTreatmentItem[]>([]);
   const [selectedMedicines, setSelectedMedicines] = useState<BillMedicineItem[]>([]);
+  const [discount, setDiscount] = useState("");
   const [amountPaid, setAmountPaid] = useState("");
 
   const { data: patientsResponse, isLoading: patientsLoading } = useQuery({
@@ -89,6 +90,8 @@ export default function BillingCreate() {
       const treatmentTotal = selectedTreatments.reduce((sum, t) => sum + t.price, 0);
       const medicineTotal = selectedMedicines.reduce((sum, m) => sum + m.total, 0);
       const grandTotal = treatmentTotal + medicineTotal;
+      const discountValue = parseFloat(discount) || 0;
+      const finalAmount = grandTotal - (grandTotal * discountValue / 100);
       const paid = parseFloat(amountPaid) || 0;
 
       return await apiRequest("POST", "/api/bills", {
@@ -99,6 +102,8 @@ export default function BillingCreate() {
         treatmentTotal,
         medicineTotal,
         grandTotal,
+        discount: discountValue,
+        finalAmount,
         amountPaid: paid,
       });
     },
@@ -127,6 +132,7 @@ export default function BillingCreate() {
     setSelectedTreatments([]);
     setSelectedMedicines([]);
     setAmountPaid("");
+    setDiscount("");
     setSearchQuery("");
     setBillDate(format(new Date(), "yyyy-MM-dd"));
   };
@@ -204,8 +210,10 @@ export default function BillingCreate() {
   const treatmentTotal = selectedTreatments.reduce((sum, t) => sum + t.price, 0);
   const medicineTotal = selectedMedicines.reduce((sum, m) => sum + m.total, 0);
   const grandTotal = treatmentTotal + medicineTotal;
+  const discountValue = parseFloat(discount) || 0;
+  const finalAmount = grandTotal - (grandTotal * discountValue / 100);
   const paid = parseFloat(amountPaid) || 0;
-  const pendingAmount = grandTotal - paid;
+  const pendingAmount = Math.max(0, finalAmount - paid);
 
   return (
     <div className="p-6 max-w-4xl mx-auto space-y-6">
@@ -465,6 +473,22 @@ export default function BillingCreate() {
                   <span>Grand Total</span>
                   <span>₹{grandTotal.toFixed(2)}</span>
                 </div>
+                <div className="flex items-center justify-between border-t pt-3">
+                  <span className="text-sm font-medium">Discount (%)</span>
+                  <Input
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={discount}
+                    onChange={(e) => setDiscount(e.target.value)}
+                    className="w-24 h-8 text-right"
+                    placeholder="0"
+                  />
+                </div>
+                <div className="flex justify-between font-bold text-xl border-t pt-3 text-primary">
+                  <span>Final Amount</span>
+                  <span>₹{finalAmount.toFixed(2)}</span>
+                </div>
               </div>
 
               {/* Payment Details */}
@@ -475,7 +499,7 @@ export default function BillingCreate() {
                     <Input
                       type="number"
                       min="0"
-                      max={grandTotal}
+                      max={finalAmount}
                       value={amountPaid}
                       onChange={(e) => setAmountPaid(e.target.value)}
                       placeholder="0"

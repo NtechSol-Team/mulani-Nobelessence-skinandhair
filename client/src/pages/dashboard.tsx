@@ -112,7 +112,7 @@ export default function Dashboard() {
     (p) => p.registrationDate === todayDate || patientIdsWithTodayVisits.has(p.id)
   );
 
-  const totalRevenue = bills.reduce((sum, bill) => sum + bill.grandTotal, 0);
+  const totalRevenue = bills.reduce((sum, bill) => sum + (bill.finalAmount || bill.grandTotal), 0);
 
   // Today's bills calculations
   const todayBills = bills.filter((bill) => bill.date === todayDate);

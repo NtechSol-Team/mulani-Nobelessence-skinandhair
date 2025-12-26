@@ -49,9 +49,10 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
-import type { Patient, Visit } from "@shared/schema";
+import type { Patient, Visit, Bill } from "@shared/schema";
 import { insertVisitSchema, insertPatientSchema } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
+import { extractPaginatedData } from "@/lib/utils";
 import { format } from "date-fns";
 import { z } from "zod";
 
@@ -83,6 +84,14 @@ export default function PatientDetails() {
     queryKey: ["/api/visits", patientId],
     enabled: !!patientId,
   });
+
+  const { data: billsResponse } = useQuery({
+    queryKey: ["/api/bills"],
+  });
+  const bills = extractPaginatedData<Bill>(billsResponse);
+  const patientBills = bills
+    .filter((b) => b.patientId === patientId)
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
   const form = useForm<AddVisitForm>({
     resolver: zodResolver(addVisitSchema),
@@ -659,6 +668,63 @@ export default function PatientDetails() {
           )}
         </DialogContent>
       </Dialog>
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between gap-4 pb-4">
+          <div>
+            <CardTitle className="text-lg">Bill History</CardTitle>
+            <p className="text-sm text-muted-foreground mt-1">
+              {patientBills.length} bill{patientBills.length !== 1 ? "s" : ""} generated
+            </p>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {patientBills.length === 0 ? (
+            <div className="text-center py-8">
+              <FileText className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
+              <p className="text-muted-foreground">No bills generated yet</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {patientBills.map((bill) => (
+                <div
+                  key={bill.id}
+                  className="flex items-center justify-between p-4 rounded-lg border bg-card hover-elevate"
+                  data-testid={`card-bill-${bill.id}`}
+                >
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium">
+                        {format(new Date(bill.date), "dd MMM yyyy")}
+                      </span>
+                      <Badge variant={bill.pendingAmount > 0 ? "destructive" : "outline"} className={bill.pendingAmount === 0 ? "text-green-600 border-green-200 bg-green-50" : ""}>
+                        {bill.pendingAmount > 0 ? "Pending" : "Paid"}
+                      </Badge>
+                    </div>
+                    <div className="text-sm text-muted-foreground">
+                      {bill.treatments.length} Treatments, {bill.medicines.length} Medicines
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="font-bold text-lg">
+                      ₹{bill.finalAmount.toFixed(2)}
+                    </div>
+                    {bill.discount > 0 && (
+                      <div className="text-xs text-muted-foreground line-through">
+                        ₹{bill.grandTotal.toFixed(2)}
+                      </div>
+                    )}
+                    {bill.pendingAmount > 0 && (
+                      <div className="text-sm text-destructive font-medium">
+                        Due: ₹{bill.pendingAmount.toFixed(2)}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

@@ -140,7 +140,10 @@ export default function BillingManage() {
         medicines,
         treatmentTotal,
         medicineTotal,
+        medicineTotal,
         grandTotal,
+        discount: billToEdit.discount,
+        finalAmount: billToEdit.discount > 0 ? grandTotal - (grandTotal * billToEdit.discount / 100) : grandTotal,
         amountPaid: billToEdit.amountPaid,
       });
     },
@@ -416,9 +419,19 @@ export default function BillingManage() {
           <span>Medicine Total:</span>
           <span>₹${bill.medicineTotal.toFixed(2)}</span>
         </div>
-        <div class="total-row grand">
-          <span>GRAND TOTAL:</span>
+        <div class="total-row">
+          <span>Subtotal:</span>
           <span>₹${bill.grandTotal.toFixed(2)}</span>
+        </div>
+        ${bill.discount > 0 ? `
+        <div class="total-row">
+          <span>Discount (${bill.discount}%):</span>
+          <span>-₹${(bill.grandTotal - bill.finalAmount).toFixed(2)}</span>
+        </div>
+        ` : ""}
+        <div class="total-row grand">
+          <span>FINAL AMOUNT:</span>
+          <span>₹${bill.finalAmount.toFixed(2)}</span>
         </div>
         <div class="total-row paid">
           <span>Amount Paid:</span>
@@ -510,9 +523,21 @@ export default function BillingManage() {
       </div>
 
       <div className="bg-muted/50 p-3 rounded space-y-2">
+        {bill.discount > 0 && (
+          <div className="flex justify-between text-sm text-muted-foreground">
+            <span>Subtotal:</span>
+            <span>₹{bill.grandTotal.toFixed(2)}</span>
+          </div>
+        )}
+        {bill.discount > 0 && (
+          <div className="flex justify-between text-sm text-muted-foreground">
+            <span>Discount ({bill.discount}%):</span>
+            <span>-₹{(bill.grandTotal - bill.finalAmount).toFixed(2)}</span>
+          </div>
+        )}
         <div className="flex justify-between text-sm font-semibold border-b pb-2">
-          <span>Grand Total:</span>
-          <span>₹{bill.grandTotal.toFixed(2)}</span>
+          <span>Final Amount:</span>
+          <span>₹{bill.finalAmount.toFixed(2)}</span>
         </div>
         <div className="flex justify-between text-sm">
           <span>Amount Paid (All Visits):</span>
@@ -737,8 +762,8 @@ export default function BillingManage() {
               <div className="p-3 bg-muted/50 rounded-lg space-y-2 text-sm border">
                 <div className="text-xs font-semibold text-muted-foreground mb-2">BILL SUMMARY</div>
                 <div className="flex justify-between">
-                  <span>Grand Total:</span>
-                  <span className="font-medium">₹{selectedBillForPayment.grandTotal.toFixed(2)}</span>
+                  <span>Final Amount:</span>
+                  <span className="font-medium">₹{selectedBillForPayment.finalAmount.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between text-green-600">
                   <span>Already Paid:</span>
@@ -774,7 +799,7 @@ export default function BillingManage() {
                     <Input
                       type="number"
                       min="0"
-                      max={selectedBillForPayment?.grandTotal}
+                      max={selectedBillForPayment?.finalAmount}
                       value={editedPaidAmount}
                       onChange={(e) => setEditedPaidAmount(e.target.value)}
                       placeholder="0"
@@ -817,8 +842,8 @@ export default function BillingManage() {
                       </div>
                       <div className="flex justify-between">
                         <span>Remaining Pending:</span>
-                        <span className={`font-medium ${((selectedBillForPayment?.grandTotal || 0) - (parseFloat(editedPaidAmount || '0'))) > 0 ? 'text-destructive' : 'text-green-600'}`}>
-                          ₹{(((selectedBillForPayment?.grandTotal || 0) - (parseFloat(editedPaidAmount || '0')))).toFixed(2)}
+                        <span className={`font-medium ${((selectedBillForPayment?.finalAmount || 0) - (parseFloat(editedPaidAmount || '0'))) > 0 ? 'text-destructive' : 'text-green-600'}`}>
+                          ₹{(((selectedBillForPayment?.finalAmount || 0) - (parseFloat(editedPaidAmount || '0')))).toFixed(2)}
                         </span>
                       </div>
                     </>
@@ -850,10 +875,10 @@ export default function BillingManage() {
 
                     if (isEditingPaidAmount) {
                       const setAmount = parseFloat(editedPaidAmount) || 0;
-                      if (setAmount < 0 || setAmount > selectedBillForPayment.grandTotal) {
+                      if (setAmount < 0 || setAmount > selectedBillForPayment.finalAmount) {
                         toast({
                           title: "Invalid Amount",
-                          description: `Please enter a value between 0 and ₹${selectedBillForPayment.grandTotal.toFixed(2)}`,
+                          description: `Please enter a value between 0 and ₹${selectedBillForPayment.finalAmount.toFixed(2)}`,
                           variant: "destructive",
                         });
                         return;

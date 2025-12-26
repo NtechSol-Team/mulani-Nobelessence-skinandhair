@@ -115,6 +115,8 @@ export interface Bill {
   treatmentTotal: number;
   medicineTotal: number;
   grandTotal: number;
+  discount: number;
+  finalAmount: number;
   amountPaid: number;
   pendingAmount: number;
 }
@@ -137,6 +139,8 @@ export const insertBillSchema = z.object({
   treatmentTotal: z.number(),
   medicineTotal: z.number(),
   grandTotal: z.number(),
+  discount: z.number().default(0),
+  finalAmount: z.number(),
   amountPaid: z.number().min(0),
 });
 
