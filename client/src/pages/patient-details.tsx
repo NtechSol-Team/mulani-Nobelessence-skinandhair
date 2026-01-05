@@ -577,8 +577,9 @@ export default function PatientDetails() {
 
                     {/* Show medicines from bills on the same date */}
                     {(() => {
+                      const visitDateStr = format(new Date(visit.date), "yyyy-MM-dd");
                       const visitBills = patientBills.filter(
-                        (b) => b.date === visit.date && b.medicines.length > 0
+                        (b) => format(new Date(b.date), "yyyy-MM-dd") === visitDateStr && b.medicines.length > 0
                       );
                       if (visitBills.length === 0) return null;
                       const allMedicines = visitBills.flatMap((b) => b.medicines);
