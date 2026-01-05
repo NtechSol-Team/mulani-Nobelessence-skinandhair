@@ -88,10 +88,13 @@ export default function BillingCreate() {
       if (!selectedPatient) throw new Error("Please select a patient");
 
       const treatmentTotal = selectedTreatments.reduce((sum, t) => sum + t.price, 0);
-      const medicineTotal = selectedMedicines.reduce((sum, m) => sum + m.total, 0);
-      const grandTotal = treatmentTotal + medicineTotal;
-      const discountValue = parseFloat(discount) || 0;
-      const finalAmount = grandTotal - (grandTotal * discountValue / 100);
+      const medicineNetTotal = selectedMedicines.reduce((sum, m) => sum + m.total, 0);
+      const medicineGrossTotal = selectedMedicines.reduce((sum, m) => sum + (m.unitPrice * m.quantity), 0);
+      const totalMedicineDiscount = selectedMedicines.reduce((sum, m) => sum + (m.discount || 0), 0);
+
+      const grandTotal = treatmentTotal + medicineGrossTotal; // Gross Total
+      const discountValue = totalMedicineDiscount; // Total Discount Amount
+      const finalAmount = treatmentTotal + medicineNetTotal; // Net Total
       const paid = parseFloat(amountPaid) || 0;
 
       return await apiRequest("POST", "/api/bills", {
@@ -100,8 +103,10 @@ export default function BillingCreate() {
         treatments: selectedTreatments,
         medicines: selectedMedicines,
         treatmentTotal,
-        medicineTotal,
-        grandTotal,
+        medicineTotal: medicineNetTotal, // We store Net total in medicine_total column usually or Gross? 
+        // Existing schema says medicine_total. 
+        // Logic in Bills page shows "Medicine Total (Net)" so it expects net.
+        grandTotal, // Saving Gross here
         discount: discountValue,
         finalAmount,
         amountPaid: paid,
@@ -169,6 +174,8 @@ export default function BillingCreate() {
         medicineName: "",
         quantity: 1,
         unitPrice: 0,
+        discountPercent: 0,
+        discount: 0,
         total: 0,
       },
     ]);
@@ -183,6 +190,8 @@ export default function BillingCreate() {
         medicineName: medicine.name,
         quantity: 1,
         unitPrice: medicine.sellingPrice,
+        discountPercent: 0,
+        discount: 0,
         total: medicine.sellingPrice,
       };
       setSelectedMedicines(updated);
@@ -192,14 +201,30 @@ export default function BillingCreate() {
   const updateMedicineQuantity = (index: number, quantity: number) => {
     const updated = [...selectedMedicines];
     updated[index].quantity = quantity;
-    updated[index].total = updated[index].unitPrice * quantity;
+    const gross = updated[index].unitPrice * quantity;
+    const discount = (gross * (updated[index].discountPercent || 0)) / 100;
+    updated[index].discount = discount;
+    updated[index].total = gross - discount;
     setSelectedMedicines(updated);
   };
 
   const updateMedicinePrice = (index: number, price: number) => {
     const updated = [...selectedMedicines];
     updated[index].unitPrice = price;
-    updated[index].total = price * updated[index].quantity;
+    const gross = price * updated[index].quantity;
+    const discount = (gross * (updated[index].discountPercent || 0)) / 100;
+    updated[index].discount = discount;
+    updated[index].total = gross - discount;
+    setSelectedMedicines(updated);
+  };
+
+  const updateMedicineDiscount = (index: number, percent: number) => {
+    const updated = [...selectedMedicines];
+    updated[index].discountPercent = percent;
+    const gross = updated[index].unitPrice * updated[index].quantity;
+    const discount = (gross * percent) / 100;
+    updated[index].discount = discount;
+    updated[index].total = gross - discount;
     setSelectedMedicines(updated);
   };
 
@@ -209,9 +234,19 @@ export default function BillingCreate() {
 
   const treatmentTotal = selectedTreatments.reduce((sum, t) => sum + t.price, 0);
   const medicineTotal = selectedMedicines.reduce((sum, m) => sum + m.total, 0);
-  const grandTotal = treatmentTotal + medicineTotal;
-  const discountValue = parseFloat(discount) || 0;
-  const finalAmount = grandTotal - (grandTotal * discountValue / 100);
+  const totalMedicineDiscount = selectedMedicines.reduce((sum, m) => sum + (m.discount || 0), 0);
+
+  // Grand total is the sum of net totals (because medicine.total is now net)
+  // If we want "Gross Total" before discount:
+  const medicineGrossTotal = selectedMedicines.reduce((sum, m) => sum + (m.unitPrice * m.quantity), 0);
+  const grossGrandTotal = treatmentTotal + medicineGrossTotal;
+
+  // Total discount is just medicine discount (user disabled bill-level discount)
+  const discountValue = totalMedicineDiscount;
+
+  // Final Amount
+  const finalAmount = treatmentTotal + medicineTotal; // Since medicineTotal is already net
+
   const paid = parseFloat(amountPaid) || 0;
   const pendingAmount = Math.max(0, finalAmount - paid);
 
@@ -420,7 +455,7 @@ export default function BillingCreate() {
                           </Button>
                         </div>
                         {med.medicineId && (
-                          <div className="grid grid-cols-3 gap-2">
+                          <div className="grid grid-cols-4 gap-2">
                             <div>
                               <label className="text-xs text-muted-foreground">Qty</label>
                               <Input
@@ -446,9 +481,23 @@ export default function BillingCreate() {
                               />
                             </div>
                             <div>
-                              <label className="text-xs text-muted-foreground">Total</label>
-                              <div className="h-8 flex items-center font-medium text-sm">
-                                ₹{med.total.toFixed(2)}
+                              <label className="text-xs text-muted-foreground">Disc %</label>
+                              <Input
+                                type="number"
+                                min="0"
+                                max="100"
+                                value={med.discountPercent}
+                                onChange={(e) =>
+                                  updateMedicineDiscount(index, parseFloat(e.target.value) || 0)
+                                }
+                                className="h-8"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs text-muted-foreground">Total (Net)</label>
+                              <div className="h-8 flex flex-col justify-center font-medium text-sm">
+                                <span>₹{med.total.toFixed(2)}</span>
+                                {med.discount ? <span className="text-xs text-green-600">(-₹{med.discount.toFixed(2)})</span> : null}
                               </div>
                             </div>
                           </div>
@@ -466,24 +515,18 @@ export default function BillingCreate() {
                   <span>₹{treatmentTotal.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Medicine Total</span>
+                  <span className="text-muted-foreground">Medicine Total (Net)</span>
                   <span>₹{medicineTotal.toFixed(2)}</span>
                 </div>
+                {totalMedicineDiscount > 0 && (
+                  <div className="flex justify-between text-sm text-green-600">
+                    <span>Total Discount</span>
+                    <span>-₹{totalMedicineDiscount.toFixed(2)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between font-semibold text-lg border-t pt-3">
-                  <span>Grand Total</span>
-                  <span>₹{grandTotal.toFixed(2)}</span>
-                </div>
-                <div className="flex items-center justify-between border-t pt-3">
-                  <span className="text-sm font-medium">Discount (%)</span>
-                  <Input
-                    type="number"
-                    min="0"
-                    max="100"
-                    value={discount}
-                    onChange={(e) => setDiscount(e.target.value)}
-                    className="w-24 h-8 text-right"
-                    placeholder="0"
-                  />
+                  <span>Gross Total</span>
+                  <span>₹{grossGrandTotal.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between font-bold text-xl border-t pt-3 text-primary">
                   <span>Final Amount</span>

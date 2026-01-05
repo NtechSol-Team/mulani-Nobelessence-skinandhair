@@ -140,7 +140,6 @@ export default function BillingManage() {
         medicines,
         treatmentTotal,
         medicineTotal,
-        medicineTotal,
         grandTotal,
         discount: billToEdit.discount,
         finalAmount: billToEdit.discount > 0 ? grandTotal - (grandTotal * billToEdit.discount / 100) : grandTotal,
@@ -389,6 +388,8 @@ export default function BillingManage() {
           <tr>
           <th>Description</th>
           <th>Type</th>
+          <th class="text-right">Rate</th>
+          <th class="text-right">Discount</th>
           <th class="text-right">Amount</th>
           </tr>
         </thead>
@@ -398,12 +399,20 @@ export default function BillingManage() {
             <td>${t.treatmentName}</td>
             <td>Treatment</td>
             <td class="text-right">₹${t.price.toFixed(2)}</td>
+            <td class="text-right">-</td>
+            <td class="text-right">₹${t.price.toFixed(2)}</td>
           </tr>
           `).join("")}
           ${bill.medicines.map(m => `
           <tr>
             <td>${m.medicineName}</td>
             <td>Medicine (${m.quantity}x)</td>
+            <td class="text-right">₹${m.unitPrice.toFixed(2)}</td>
+            <td class="text-right">
+              ${(m.discount || 0) > 0
+        ? `${m.discountPercent ? m.discountPercent + '%' : ''} (₹${(m.discount || 0).toFixed(2)})`
+        : '-'}
+            </td>
             <td class="text-right">₹${m.total.toFixed(2)}</td>
           </tr>
           `).join("")}
@@ -417,15 +426,15 @@ export default function BillingManage() {
         </div>
         <div class="total-row">
           <span>Medicine Total:</span>
-          <span>₹${bill.medicineTotal.toFixed(2)}</span>
+          <span>₹${bill.medicines.reduce((sum, m) => sum + m.total, 0).toFixed(2)}</span>
         </div>
         <div class="total-row">
-          <span>Subtotal:</span>
+          <span>Gross Amount:</span>
           <span>₹${bill.grandTotal.toFixed(2)}</span>
         </div>
-        ${bill.discount > 0 ? `
+        ${(bill.grandTotal - bill.finalAmount) > 0.01 ? `
         <div class="total-row">
-          <span>Discount (${bill.discount}%):</span>
+          <span>Total Discount:</span>
           <span>-₹${(bill.grandTotal - bill.finalAmount).toFixed(2)}</span>
         </div>
         ` : ""}

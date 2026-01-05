@@ -94,6 +94,8 @@ export interface BillMedicineItem {
   medicineName: string;
   quantity: number;
   unitPrice: number;
+  discountPercent?: number; // User input percentage
+  discount?: number; // Calculated amount
   total: number;
 }
 
@@ -134,6 +136,8 @@ export const insertBillSchema = z.object({
     medicineName: z.string(),
     quantity: z.number().min(1),
     unitPrice: z.number().min(0),
+    discountPercent: z.number().min(0).max(100).optional().default(0),
+    discount: z.number().min(0).optional().default(0),
     total: z.number(),
   })),
   treatmentTotal: z.number(),

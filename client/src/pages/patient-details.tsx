@@ -574,6 +574,30 @@ export default function PatientDetails() {
                         </p>
                       </div>
                     </div>
+
+                    {/* Show medicines from bills on the same date */}
+                    {(() => {
+                      const visitBills = patientBills.filter(
+                        (b) => b.date === visit.date && b.medicines.length > 0
+                      );
+                      if (visitBills.length === 0) return null;
+                      const allMedicines = visitBills.flatMap((b) => b.medicines);
+                      return (
+                        <div className="p-3 rounded-lg bg-primary/5 border border-primary/10 mt-2">
+                          <div className="flex items-center gap-2 text-sm font-medium text-primary mb-2">
+                            <FileText className="w-4 h-4" />
+                            Medicines Given
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            {allMedicines.map((m, idx) => (
+                              <Badge key={idx} variant="secondary" className="text-xs">
+                                {m.medicineName} x{m.quantity}
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
               ))}
