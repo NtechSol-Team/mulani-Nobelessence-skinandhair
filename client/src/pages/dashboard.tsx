@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { Patient, Bill, Visit, Appointment } from "@shared/schema";
 import { extractPaginatedData } from "@/lib/utils";
-import { format } from "date-fns";
+import { format, startOfMonth, endOfMonth, isWithinInterval } from "date-fns";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -112,7 +112,7 @@ export default function Dashboard() {
     (p) => p.registrationDate === todayDate || patientIdsWithTodayVisits.has(p.id)
   );
 
-  const totalRevenue = bills.reduce((sum, bill) => sum + (bill.finalAmount || bill.grandTotal), 0);
+
 
   // Today's bills calculations
   const todayBills = bills.filter((bill) => bill.date === todayDate);
@@ -121,6 +121,31 @@ export default function Dashboard() {
 
   // Today's Appointments
   const todayAppointments = appointments.filter(a => a.date === todayDate);
+
+  // Total pending amount from all bills
+  const totalPendingAmount = pendingBills.reduce((sum, bill) => sum + bill.pendingAmount, 0);
+
+  // This month's statistics
+  const currentMonthStart = startOfMonth(new Date());
+  const currentMonthEnd = endOfMonth(new Date());
+
+  // Get visits for this month
+  const thisMonthVisits = visits.filter((v) => {
+    const visitDate = new Date(v.date);
+    return isWithinInterval(visitDate, { start: currentMonthStart, end: currentMonthEnd });
+  });
+
+  // Unique patients this month (from visits)
+  const uniquePatientIdsThisMonth = new Set(thisMonthVisits.map((v) => v.patientId));
+  const uniquePatientsThisMonth = uniquePatientIdsThisMonth.size;
+
+  // Repeat visit patients: patients with more than 1 visit this month
+  const patientVisitCount = thisMonthVisits.reduce((acc, v) => {
+    acc[v.patientId] = (acc[v.patientId] || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
+
+  const repeatVisitPatientsCount = Object.values(patientVisitCount).filter((count) => count > 1).length;
 
   return (
     <div className="p-6 max-w-[1600px] mx-auto space-y-6">
@@ -203,20 +228,37 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
-              Total Revenue
+              This Month's Unique Patients
             </CardTitle>
-            <TrendingUp className="w-4 h-4 text-muted-foreground" />
+            <Users className="w-4 h-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold" data-testid="text-total-revenue">
-              {patientsLoading ? <Skeleton className="h-8 w-20" /> : `₹${totalRevenue.toLocaleString()}`}
+            <div className="text-2xl font-bold text-blue-600" data-testid="text-monthly-unique-patients">
+              {patientsLoading ? <Skeleton className="h-8 w-16" /> : uniquePatientsThisMonth}
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              Total grand amount from all bills
+              Patients visited this month ({format(currentMonthStart, "MMM yyyy")})
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              Repeat Visit Patients
+            </CardTitle>
+            <Calendar className="w-4 h-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-purple-600" data-testid="text-repeat-visit-patients">
+              {patientsLoading ? <Skeleton className="h-8 w-16" /> : repeatVisitPatientsCount}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              Patients with multiple visits this month
             </p>
           </CardContent>
         </Card>
@@ -234,6 +276,23 @@ export default function Dashboard() {
             </div>
             <p className="text-xs text-muted-foreground mt-1">
               Bills with balance due
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              Total Pending Amount
+            </CardTitle>
+            <AlertCircle className="w-4 h-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-destructive" data-testid="text-total-pending-amount">
+              {patientsLoading ? <Skeleton className="h-8 w-20" /> : `₹${totalPendingAmount.toLocaleString()}`}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              Outstanding balance from all bills
             </p>
           </CardContent>
         </Card>

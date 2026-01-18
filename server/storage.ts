@@ -343,6 +343,11 @@ const mapBill = (row: DbBillRow): Bill => {
     }
   }
 
+  // Properly handle finalAmount - only fallback to grand_total if finalAmount is truly null/undefined
+  const finalAmount = row.final_amount !== null && row.final_amount !== undefined
+    ? row.final_amount
+    : row.grand_total;
+
   return {
     id: normalizeId(row.id),
     patientId: normalizeId(row.patient_id),
@@ -354,7 +359,7 @@ const mapBill = (row: DbBillRow): Bill => {
     medicineTotal: row.medicine_total,
     grandTotal: row.grand_total,
     discount: row.discount || 0,
-    finalAmount: row.final_amount || row.grand_total, // Fallback for old records
+    finalAmount: finalAmount,
     amountPaid: row.amount_paid,
     pendingAmount: row.pending_amount,
   };

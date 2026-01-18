@@ -309,8 +309,7 @@ export default function BillingManage() {
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
     .filter((bill) =>
       bill.patientName.toLowerCase().includes(recentBillSearch.toLowerCase().trim())
-    )
-    .slice(0, 15);
+    );
 
   const handlePrintBill = (bill: Bill) => {
     const printContent = `

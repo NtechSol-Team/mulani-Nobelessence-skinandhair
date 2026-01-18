@@ -7,6 +7,9 @@ import {
   Pill,
   Calendar,
   IndianRupee,
+  ChevronDown,
+  ChevronUp,
+  Activity,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -55,6 +58,8 @@ export default function Reports() {
   const [dateFilter, setDateFilter] = useState("current-month");
   const [customStartDate, setCustomStartDate] = useState<string>("");
   const [customEndDate, setCustomEndDate] = useState<string>("");
+  const [medicineReportTab, setMedicineReportTab] = useState<"period" | "monthly" | "overall">("period");
+  const [expandedMonths, setExpandedMonths] = useState<Set<string>>(new Set());
   const { data: billsResponse, isLoading: billsLoading } = useQuery({
     queryKey: ["/api/bills"],
   });
@@ -105,14 +110,22 @@ export default function Reports() {
     isWithinInterval(new Date(e.date), { start: dateRangeStart, end: dateRangeEnd })
   );
 
+  // Revenue = sum of finalAmount for all bills in the period
   const thisMonthRevenue = thisMonthBills.reduce(
-    (sum, b) => sum + (b.finalAmount || b.grandTotal),
+    (sum, b) => sum + (typeof b.finalAmount === 'number' ? b.finalAmount : parseFloat(String(b.finalAmount)) || 0),
     0
   );
+
+  // Total discount = sum of (grandTotal - finalAmount) for all bills
   const thisMonthDiscount = thisMonthBills.reduce(
-    (sum, b) => sum + (b.discount > 0 ? b.grandTotal - b.finalAmount : 0),
+    (sum, b) => {
+      const grandTotal = typeof b.grandTotal === 'number' ? b.grandTotal : parseFloat(String(b.grandTotal)) || 0;
+      const finalAmount = typeof b.finalAmount === 'number' ? b.finalAmount : parseFloat(String(b.finalAmount)) || 0;
+      return sum + (grandTotal - finalAmount);
+    },
     0
   );
+
   const thisMonthTreatmentRevenue = thisMonthBills.reduce(
     (sum, b) => sum + b.treatmentTotal,
     0
@@ -123,7 +136,28 @@ export default function Reports() {
   );
   const thisMonthExpenseTotal = thisMonthExpenses.reduce((sum, e) => sum + e.amount, 0);
 
-  const medicineProfitData = medicines.map((medicine) => {
+  // Medicine profit data filtered by selected date range
+  const filteredMedicineProfitData = medicines.map((medicine) => {
+    const soldItems = thisMonthBills.flatMap((b) =>
+      b.medicines.filter((m) => m.medicineId === medicine.id)
+    );
+    const quantitySold = soldItems.reduce((sum, m) => sum + m.quantity, 0);
+    const totalRevenue = soldItems.reduce((sum, m) => sum + m.total, 0);
+    const totalCost = quantitySold * medicine.purchaseCost;
+    const profit = totalRevenue - totalCost;
+
+    return {
+      medicineId: medicine.id,
+      medicineName: medicine.name,
+      quantitySold,
+      totalRevenue,
+      totalCost,
+      profit,
+    };
+  }).filter((m) => m.quantitySold > 0);
+
+  // Overall medicine profit data (all time)
+  const overallMedicineProfitData = medicines.map((medicine) => {
     const soldItems = bills.flatMap((b) =>
       b.medicines.filter((m) => m.medicineId === medicine.id)
     );
@@ -142,7 +176,46 @@ export default function Reports() {
     };
   }).filter((m) => m.quantitySold > 0);
 
-  const totalMedicineProfit = medicineProfitData.reduce((sum, m) => sum + m.profit, 0);
+  // Monthly breakdown: medicine sales for each of the last 6 months
+  const monthlyMedicineSales = Array.from({ length: 6 }, (_, i) => {
+    const date = subMonths(today, 5 - i);
+    const start = startOfMonth(date);
+    const end = endOfMonth(date);
+    const monthLabel = format(date, "MMM yyyy");
+
+    const monthBills = bills.filter((b) =>
+      isWithinInterval(new Date(b.date), { start, end })
+    );
+
+    const medicineSales = medicines.map((medicine) => {
+      const soldItems = monthBills.flatMap((b) =>
+        b.medicines.filter((m) => m.medicineId === medicine.id)
+      );
+      const quantitySold = soldItems.reduce((sum, m) => sum + m.quantity, 0);
+      const totalRevenue = soldItems.reduce((sum, m) => sum + m.total, 0);
+      const totalCost = quantitySold * medicine.purchaseCost;
+      const profit = totalRevenue - totalCost;
+
+      return {
+        medicineId: medicine.id,
+        medicineName: medicine.name,
+        quantitySold,
+        totalRevenue,
+        profit,
+      };
+    }).filter((m) => m.quantitySold > 0);
+
+    return {
+      month: monthLabel,
+      medicineSales,
+      totalQuantity: medicineSales.reduce((sum, m) => sum + m.quantitySold, 0),
+      totalRevenue: medicineSales.reduce((sum, m) => sum + m.totalRevenue, 0),
+      totalProfit: medicineSales.reduce((sum, m) => sum + m.profit, 0),
+    };
+  });
+
+  // Use filtered data for the medicine profit card
+  const totalMedicineProfit = filteredMedicineProfitData.reduce((sum, m) => sum + m.profit, 0);
   const totalProfit = thisMonthRevenue - thisMonthExpenseTotal;
 
   const last6Months = Array.from({ length: 6 }, (_, i) => {
@@ -157,7 +230,7 @@ export default function Reports() {
       isWithinInterval(new Date(e.date), { start, end })
     );
 
-    const revenue = monthBills.reduce((sum, b) => sum + (b.finalAmount || b.grandTotal), 0);
+    const revenue = monthBills.reduce((sum, b) => sum + (b.finalAmount !== undefined && b.finalAmount !== null ? b.finalAmount : b.grandTotal), 0);
     const expenseTotal = monthExpenses.reduce((sum, e) => sum + e.amount, 0);
 
     return {
@@ -172,6 +245,30 @@ export default function Reports() {
     { name: "Treatments", value: thisMonthTreatmentRevenue },
     { name: "Medicines", value: thisMonthMedicineRevenue },
   ].filter((item) => item.value > 0);
+
+  // Treatment Trends - Count treatment frequency from bills
+  const treatmentTrends = thisMonthBills.reduce((acc, bill) => {
+    bill.treatments.forEach((treatment) => {
+      const existing = acc.find((t) => t.treatmentId === treatment.treatmentId);
+      if (existing) {
+        existing.count += 1;
+        existing.totalRevenue += treatment.price;
+      } else {
+        acc.push({
+          treatmentId: treatment.treatmentId,
+          treatmentName: treatment.treatmentName,
+          count: 1,
+          totalRevenue: treatment.price,
+        });
+      }
+    });
+    return acc;
+  }, [] as { treatmentId: string; treatmentName: string; count: number; totalRevenue: number }[])
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 5); // Top 5 treatments
+
+  // Calculate max count for progress bar percentages
+  const maxTreatmentCount = treatmentTrends.length > 0 ? treatmentTrends[0].count : 0;
 
   return (
     <div className="p-6 max-w-[1600px] mx-auto space-y-6">
@@ -311,26 +408,7 @@ export default function Reports() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Medicine Profit
-            </CardTitle>
-            <Pill className="w-4 h-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-primary" data-testid="text-medicine-profit">
-              {isLoading ? (
-                <Skeleton className="h-8 w-24" />
-              ) : (
-                `₹${totalMedicineProfit.toLocaleString()}`
-              )}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              From medicine sales
-            </p>
-          </CardContent>
-        </Card>
+
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
@@ -445,12 +523,182 @@ export default function Reports() {
         </Card>
       </div>
 
+      {/* Treatment Trends Chart */}
+      <Card>
+        <CardHeader className="pb-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <Activity className="w-5 h-5 text-primary" />
+                Top 5 Treatment Trends
+              </CardTitle>
+              <p className="text-sm text-muted-foreground mt-1">
+                Most popular treatments based on billing frequency
+              </p>
+            </div>
+            <div className="text-right">
+              <div className="text-2xl font-bold text-primary">
+                {treatmentTrends.reduce((sum, t) => sum + t.count, 0)}
+              </div>
+              <p className="text-xs text-muted-foreground">Total Treatments</p>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <Skeleton className="h-64 w-full" />
+          ) : treatmentTrends.length === 0 ? (
+            <div className="h-64 flex items-center justify-center text-muted-foreground">
+              <div className="text-center">
+                <Activity className="w-12 h-12 mx-auto mb-3 opacity-30" />
+                <p className="font-medium">No treatment data for this period</p>
+                <p className="text-sm">Treatment statistics will appear once bills are created</p>
+              </div>
+            </div>
+          ) : (
+            <div className="grid lg:grid-cols-2 gap-8">
+              {/* Donut Chart */}
+              <div className="flex flex-col items-center justify-center">
+                <ResponsiveContainer width="100%" height={280}>
+                  <PieChart>
+                    <Pie
+                      data={treatmentTrends}
+                      dataKey="count"
+                      nameKey="treatmentName"
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={70}
+                      outerRadius={110}
+                      paddingAngle={2}
+                      strokeWidth={0}
+                    >
+                      {treatmentTrends.map((_, index) => (
+                        <Cell
+                          key={`cell-${index}`}
+                          fill={COLORS[index % COLORS.length]}
+                        />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: "hsl(var(--card))",
+                        border: "1px solid hsl(var(--border))",
+                        borderRadius: "8px",
+                        padding: "8px 12px",
+                      }}
+                      formatter={(value: number, name: string) => [`${value} treatments`, name]}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+                {/* Legend */}
+                <div className="flex flex-wrap justify-center gap-4 mt-2">
+                  {treatmentTrends.slice(0, 5).map((treatment, index) => (
+                    <div key={treatment.treatmentId} className="flex items-center gap-1.5">
+                      <div
+                        className="w-2.5 h-2.5 rounded-full"
+                        style={{ backgroundColor: COLORS[index % COLORS.length] }}
+                      />
+                      <span className="text-xs text-muted-foreground">
+                        {treatment.treatmentName.length > 15
+                          ? `${treatment.treatmentName.slice(0, 15)}...`
+                          : treatment.treatmentName}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Treatment List */}
+              <div className="space-y-4">
+                {treatmentTrends.map((treatment, index) => {
+                  const percentage = maxTreatmentCount > 0 ? (treatment.count / maxTreatmentCount) * 100 : 0;
+
+                  return (
+                    <div
+                      key={treatment.treatmentId}
+                      className="group"
+                    >
+                      <div className="flex items-center justify-between mb-1.5">
+                        <div className="flex items-center gap-3">
+                          <div
+                            className="w-8 h-8 rounded-lg flex items-center justify-center text-sm font-bold text-white"
+                            style={{ backgroundColor: COLORS[index % COLORS.length] }}
+                          >
+                            {index + 1}
+                          </div>
+                          <div>
+                            <h4 className="font-medium text-sm leading-tight">
+                              {treatment.treatmentName}
+                            </h4>
+                            <p className="text-xs text-muted-foreground">
+                              ₹{treatment.totalRevenue.toLocaleString()} revenue
+                            </p>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-sm font-semibold">
+                            {treatment.count}
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            {treatment.count === 1 ? "treatment" : "treatments"}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                        <div
+                          className="h-full rounded-full transition-all duration-500 ease-out"
+                          style={{
+                            width: `${percentage}%`,
+                            backgroundColor: COLORS[index % COLORS.length],
+                          }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-lg">
-            <Pill className="w-5 h-5 text-primary" />
-            Medicine-wise Profit Analysis
-          </CardTitle>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <Pill className="w-5 h-5 text-primary" />
+              Medicine-wise Profit Analysis
+            </CardTitle>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setMedicineReportTab("period")}
+                className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${medicineReportTab === "period"
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-muted hover:bg-muted/80"
+                  }`}
+              >
+                Selected Period
+              </button>
+              <button
+                onClick={() => setMedicineReportTab("monthly")}
+                className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${medicineReportTab === "monthly"
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-muted hover:bg-muted/80"
+                  }`}
+              >
+                Monthly Breakdown
+              </button>
+              <button
+                onClick={() => setMedicineReportTab("overall")}
+                className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${medicineReportTab === "overall"
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-muted hover:bg-muted/80"
+                  }`}
+              >
+                Overall (All Time)
+              </button>
+            </div>
+          </div>
         </CardHeader>
         <CardContent>
           {isLoading ? (
@@ -459,75 +707,207 @@ export default function Reports() {
                 <Skeleton key={i} className="h-12 w-full" />
               ))}
             </div>
-          ) : medicineProfitData.length === 0 ? (
-            <div className="text-center py-12">
-              <Pill className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-              <h3 className="text-lg font-medium mb-1">No medicine sales data</h3>
-              <p className="text-muted-foreground text-sm">
-                Medicine profit analysis will appear here once medicines are sold
-              </p>
+          ) : medicineReportTab === "monthly" ? (
+            // Monthly Breakdown View with Collapsible Dropdowns
+            <div className="space-y-3">
+              {monthlyMedicineSales.map((monthData) => {
+                const isExpanded = expandedMonths.has(monthData.month);
+                const toggleMonth = () => {
+                  setExpandedMonths((prev) => {
+                    const newSet = new Set(prev);
+                    if (newSet.has(monthData.month)) {
+                      newSet.delete(monthData.month);
+                    } else {
+                      newSet.add(monthData.month);
+                    }
+                    return newSet;
+                  });
+                };
+
+                return (
+                  <div key={monthData.month} className="border rounded-lg overflow-hidden">
+                    <button
+                      onClick={toggleMonth}
+                      className="w-full bg-muted/50 px-4 py-3 hover:bg-muted/70 transition-colors cursor-pointer"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          {isExpanded ? (
+                            <ChevronUp className="w-5 h-5 text-muted-foreground" />
+                          ) : (
+                            <ChevronDown className="w-5 h-5 text-muted-foreground" />
+                          )}
+                          <h4 className="font-semibold text-lg">{monthData.month}</h4>
+                        </div>
+                        <div className="flex gap-4 text-sm">
+                          <span>
+                            <span className="text-muted-foreground">Qty:</span>{" "}
+                            <span className="font-medium">{monthData.totalQuantity}</span>
+                          </span>
+                          <span>
+                            <span className="text-muted-foreground">Revenue:</span>{" "}
+                            <span className="font-medium">₹{monthData.totalRevenue.toLocaleString()}</span>
+                          </span>
+                          <span>
+                            <span className="text-muted-foreground">Profit:</span>{" "}
+                            <span className={`font-medium ${monthData.totalProfit >= 0 ? "text-primary" : "text-destructive"}`}>
+                              ₹{monthData.totalProfit.toLocaleString()}
+                            </span>
+                          </span>
+                        </div>
+                      </div>
+                    </button>
+                    {isExpanded && (
+                      <>
+                        {monthData.medicineSales.length === 0 ? (
+                          <div className="px-4 py-6 text-center text-muted-foreground border-t">
+                            No medicine sales this month
+                          </div>
+                        ) : (
+                          <Table>
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead>Medicine Name</TableHead>
+                                <TableHead className="text-right">Qty Sold</TableHead>
+                                <TableHead className="text-right">Revenue</TableHead>
+                                <TableHead className="text-right">Profit</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {monthData.medicineSales
+                                .sort((a, b) => b.quantitySold - a.quantitySold)
+                                .map((item) => (
+                                  <TableRow key={item.medicineId}>
+                                    <TableCell className="font-medium">
+                                      {item.medicineName}
+                                    </TableCell>
+                                    <TableCell className="text-right">
+                                      {item.quantitySold}
+                                    </TableCell>
+                                    <TableCell className="text-right">
+                                      ₹{item.totalRevenue.toFixed(2)}
+                                    </TableCell>
+                                    <TableCell className="text-right">
+                                      <span
+                                        className={
+                                          item.profit >= 0 ? "text-primary" : "text-destructive"
+                                        }
+                                      >
+                                        ₹{item.profit.toFixed(2)}
+                                      </span>
+                                    </TableCell>
+                                  </TableRow>
+                                ))}
+                            </TableBody>
+                          </Table>
+                        )}
+                      </>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           ) : (
-            <div className="border rounded-lg overflow-hidden">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Medicine Name</TableHead>
-                    <TableHead className="text-right">Qty Sold</TableHead>
-                    <TableHead className="text-right">Revenue</TableHead>
-                    <TableHead className="text-right">Cost</TableHead>
-                    <TableHead className="text-right">Profit</TableHead>
-                    <TableHead className="text-right">Margin</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {medicineProfitData
-                    .sort((a, b) => b.profit - a.profit)
-                    .map((item) => {
-                      const margin =
-                        item.totalRevenue > 0
-                          ? ((item.profit / item.totalRevenue) * 100).toFixed(1)
-                          : 0;
+            // Period or Overall View
+            (() => {
+              const dataToShow = medicineReportTab === "period" ? filteredMedicineProfitData : overallMedicineProfitData;
+              const totalProfit = dataToShow.reduce((sum, m) => sum + m.profit, 0);
+              const totalRevenue = dataToShow.reduce((sum, m) => sum + m.totalRevenue, 0);
+              const totalQty = dataToShow.reduce((sum, m) => sum + m.quantitySold, 0);
 
-                      return (
-                        <TableRow
-                          key={item.medicineId}
-                          data-testid={`row-medicine-profit-${item.medicineId}`}
-                        >
-                          <TableCell className="font-medium">
-                            {item.medicineName}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {item.quantitySold}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            ₹{item.totalRevenue.toFixed(2)}
-                          </TableCell>
-                          <TableCell className="text-right text-muted-foreground">
-                            ₹{item.totalCost.toFixed(2)}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            <span
-                              className={
-                                item.profit >= 0 ? "text-primary" : "text-destructive"
-                              }
-                            >
-                              ₹{item.profit.toFixed(2)}
-                            </span>
-                          </TableCell>
-                          <TableCell className="text-right">
-                            <Badge
-                              variant={Number(margin) >= 20 ? "default" : "secondary"}
-                            >
-                              {margin}%
-                            </Badge>
-                          </TableCell>
+              return dataToShow.length === 0 ? (
+                <div className="text-center py-12">
+                  <Pill className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+                  <h3 className="text-lg font-medium mb-1">No medicine sales data</h3>
+                  <p className="text-muted-foreground text-sm">
+                    {medicineReportTab === "period"
+                      ? "No medicine sales in the selected period"
+                      : "Medicine profit analysis will appear here once medicines are sold"}
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {/* Summary Stats */}
+                  <div className="grid grid-cols-3 gap-4 p-4 bg-muted/30 rounded-lg">
+                    <div className="text-center">
+                      <div className="text-2xl font-bold">{totalQty}</div>
+                      <div className="text-sm text-muted-foreground">Total Quantity Sold</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-2xl font-bold">₹{totalRevenue.toLocaleString()}</div>
+                      <div className="text-sm text-muted-foreground">Total Revenue</div>
+                    </div>
+                    <div className="text-center">
+                      <div className={`text-2xl font-bold ${totalProfit >= 0 ? "text-primary" : "text-destructive"}`}>
+                        ₹{totalProfit.toLocaleString()}
+                      </div>
+                      <div className="text-sm text-muted-foreground">Total Profit</div>
+                    </div>
+                  </div>
+
+                  <div className="border rounded-lg overflow-hidden">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Medicine Name</TableHead>
+                          <TableHead className="text-right">Qty Sold</TableHead>
+                          <TableHead className="text-right">Revenue</TableHead>
+                          <TableHead className="text-right">Cost</TableHead>
+                          <TableHead className="text-right">Profit</TableHead>
+                          <TableHead className="text-right">Margin</TableHead>
                         </TableRow>
-                      );
-                    })}
-                </TableBody>
-              </Table>
-            </div>
+                      </TableHeader>
+                      <TableBody>
+                        {dataToShow
+                          .sort((a, b) => b.profit - a.profit)
+                          .map((item) => {
+                            const margin =
+                              item.totalRevenue > 0
+                                ? ((item.profit / item.totalRevenue) * 100).toFixed(1)
+                                : 0;
+
+                            return (
+                              <TableRow
+                                key={item.medicineId}
+                                data-testid={`row-medicine-profit-${item.medicineId}`}
+                              >
+                                <TableCell className="font-medium">
+                                  {item.medicineName}
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  {item.quantitySold}
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  ₹{item.totalRevenue.toFixed(2)}
+                                </TableCell>
+                                <TableCell className="text-right text-muted-foreground">
+                                  ₹{item.totalCost.toFixed(2)}
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  <span
+                                    className={
+                                      item.profit >= 0 ? "text-primary" : "text-destructive"
+                                    }
+                                  >
+                                    ₹{item.profit.toFixed(2)}
+                                  </span>
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  <Badge
+                                    variant={Number(margin) >= 20 ? "default" : "secondary"}
+                                  >
+                                    {margin}%
+                                  </Badge>
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
+              );
+            })()
           )}
         </CardContent>
       </Card>
