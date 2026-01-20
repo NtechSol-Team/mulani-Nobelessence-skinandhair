@@ -128,17 +128,8 @@ export default function Dashboard() {
     return isWithinInterval(visitDate, { start: currentMonthStart, end: currentMonthEnd });
   });
 
-  // Unique patients this month (from visits)
-  const uniquePatientIdsThisMonth = new Set(thisMonthVisits.map((v) => v.patientId));
-  const uniquePatientsThisMonth = uniquePatientIdsThisMonth.size;
-
-  // Repeat visit patients: patients with more than 1 visit this month
-  const patientVisitCount = thisMonthVisits.reduce((acc, v) => {
-    acc[v.patientId] = (acc[v.patientId] || 0) + 1;
-    return acc;
-  }, {} as Record<string, number>);
-
-  const repeatVisitPatientsCount = Object.values(patientVisitCount).filter((count) => count > 1).length;
+  // Patients with at least 1 visit this month
+  const uniquePatientIdsWithVisitsThisMonth = new Set(thisMonthVisits.map((v) => v.patientId));
 
   // Filter patients for search
   const filteredPatients = patients.filter(
@@ -147,19 +138,22 @@ export default function Dashboard() {
       patient.phone.includes(searchQuery)
   );
 
-  // New patients this month (registered this month)
+  // New patients this month = Patients registered this month
+  // (Registration is their first visit, so they are "new" patients)
   const newPatientsThisMonth = patients.filter((p) => {
     const regDate = new Date(p.registrationDate);
     return isWithinInterval(regDate, { start: currentMonthStart, end: currentMonthEnd });
   });
 
-  // Repeat visit patients this month (patients with more than 1 visit this month)
-  const repeatPatientIds = new Set(
-    Object.entries(patientVisitCount)
-      .filter(([_, count]) => count > 1)
-      .map(([patientId]) => patientId)
-  );
-  const repeatPatientsThisMonth = patients.filter((p) => repeatPatientIds.has(p.id));
+  // Repeat visit patients this month = Patients registered BEFORE this month who have a visit THIS month
+  // (They are returning/follow-up patients)
+  const repeatPatientsThisMonth = patients.filter((p) => {
+    const regDate = new Date(p.registrationDate);
+    const wasRegisteredBeforeThisMonth = regDate < currentMonthStart;
+    const hasVisitThisMonth = uniquePatientIdsWithVisitsThisMonth.has(p.id);
+    return wasRegisteredBeforeThisMonth && hasVisitThisMonth;
+  });
+  const repeatVisitPatientsCount = repeatPatientsThisMonth.length;
 
   // Get displayed patients based on filter
   const getDisplayedPatients = () => {
@@ -269,16 +263,16 @@ export default function Dashboard() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
-              This Month's Unique Patients
+              New Patients This Month
             </CardTitle>
             <Users className="w-4 h-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-blue-600" data-testid="text-monthly-unique-patients">
-              {patientsLoading ? <Skeleton className="h-8 w-16" /> : uniquePatientsThisMonth}
+              {patientsLoading ? <Skeleton className="h-8 w-16" /> : newPatientsThisMonth.length}
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              Patients visited this month ({format(currentMonthStart, "MMM yyyy")})
+              First-time registrations ({format(currentMonthStart, "MMM yyyy")})
             </p>
           </CardContent>
         </Card>
@@ -295,7 +289,7 @@ export default function Dashboard() {
               {patientsLoading ? <Skeleton className="h-8 w-16" /> : repeatVisitPatientsCount}
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              Patients with multiple visits this month
+              Follow-up visits this month
             </p>
           </CardContent>
         </Card>
