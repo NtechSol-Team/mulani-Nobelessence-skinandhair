@@ -166,11 +166,20 @@ export default function Dashboard() {
           patient.phone.includes(searchQuery)
       );
     } else if (patientFilter === "repeat") {
-      basePatients = repeatPatientsThisMonth.filter(
-        (patient) =>
-          patient.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          patient.phone.includes(searchQuery)
-      );
+      basePatients = repeatPatientsThisMonth
+        .filter(
+          (patient) =>
+            patient.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            patient.phone.includes(searchQuery)
+        )
+        // Sort by last visit date (most recent first)
+        .sort((a, b) => {
+          const aVisits = visits.filter((v) => v.patientId === a.id);
+          const bVisits = visits.filter((v) => v.patientId === b.id);
+          const aLastVisit = aVisits.length > 0 ? Math.max(...aVisits.map(v => new Date(v.date).getTime())) : 0;
+          const bLastVisit = bVisits.length > 0 ? Math.max(...bVisits.map(v => new Date(v.date).getTime())) : 0;
+          return bLastVisit - aLastVisit; // Most recent first
+        });
     }
 
     return basePatients;
@@ -520,6 +529,12 @@ export default function Dashboard() {
                 const patientBills = bills.filter((b) => b.patientId === patient.id);
                 const hasPending = patientBills.some((b) => b.pendingAmount > 0);
 
+                // Get last visit date for this patient
+                const patientVisits = visits.filter((v) => v.patientId === patient.id);
+                const lastVisit = patientVisits.length > 0
+                  ? patientVisits.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0]
+                  : null;
+
                 return (
                   <Link
                     key={patient.id}
@@ -545,7 +560,7 @@ export default function Dashboard() {
                               </Badge>
                             )}
                           </div>
-                          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <div className="flex items-center gap-2 text-sm text-muted-foreground flex-wrap">
                             <Phone className="w-3 h-3" />
                             <span data-testid={`text-patient-phone-${patient.id}`}>
                               {patient.phone}
@@ -554,6 +569,14 @@ export default function Dashboard() {
                             <span>
                               Registered: {format(new Date(patient.registrationDate), "dd MMM yyyy")}
                             </span>
+                            {lastVisit && (
+                              <>
+                                <span className="text-border">|</span>
+                                <span>
+                                  Last Visit: {format(new Date(lastVisit.date), "dd MMM yyyy")}
+                                </span>
+                              </>
+                            )}
                           </div>
                         </div>
                       </div>
