@@ -25,6 +25,7 @@ type AppointmentForm = z.infer<typeof insertAppointmentSchema>;
 
 export default function Dashboard() {
   const [searchQuery, setSearchQuery] = useState("");
+  const [patientFilter, setPatientFilter] = useState<"all" | "new" | "repeat">("all");
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -89,12 +90,6 @@ export default function Dashboard() {
   });
   const appointments = Array.isArray(appointmentsResponse) ? appointmentsResponse : [];
 
-  const filteredPatients = patients.filter(
-    (patient) =>
-      patient.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      patient.phone.includes(searchQuery)
-  );
-
   const pendingBills = bills.filter((bill) => bill.pendingAmount > 0);
 
   // Get today's date string
@@ -111,8 +106,6 @@ export default function Dashboard() {
   const todayPatients = patients.filter(
     (p) => p.registrationDate === todayDate || patientIdsWithTodayVisits.has(p.id)
   );
-
-
 
   // Today's bills calculations
   const todayBills = bills.filter((bill) => bill.date === todayDate);
@@ -146,6 +139,50 @@ export default function Dashboard() {
   }, {} as Record<string, number>);
 
   const repeatVisitPatientsCount = Object.values(patientVisitCount).filter((count) => count > 1).length;
+
+  // Filter patients for search
+  const filteredPatients = patients.filter(
+    (patient) =>
+      patient.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      patient.phone.includes(searchQuery)
+  );
+
+  // New patients this month (registered this month)
+  const newPatientsThisMonth = patients.filter((p) => {
+    const regDate = new Date(p.registrationDate);
+    return isWithinInterval(regDate, { start: currentMonthStart, end: currentMonthEnd });
+  });
+
+  // Repeat visit patients this month (patients with more than 1 visit this month)
+  const repeatPatientIds = new Set(
+    Object.entries(patientVisitCount)
+      .filter(([_, count]) => count > 1)
+      .map(([patientId]) => patientId)
+  );
+  const repeatPatientsThisMonth = patients.filter((p) => repeatPatientIds.has(p.id));
+
+  // Get displayed patients based on filter
+  const getDisplayedPatients = () => {
+    let basePatients = filteredPatients;
+
+    if (patientFilter === "new") {
+      basePatients = newPatientsThisMonth.filter(
+        (patient) =>
+          patient.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          patient.phone.includes(searchQuery)
+      );
+    } else if (patientFilter === "repeat") {
+      basePatients = repeatPatientsThisMonth.filter(
+        (patient) =>
+          patient.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          patient.phone.includes(searchQuery)
+      );
+    }
+
+    return basePatients;
+  };
+
+  const displayedPatients = getDisplayedPatients();
 
   return (
     <div className="p-6 max-w-[1600px] mx-auto space-y-6">
@@ -420,18 +457,49 @@ export default function Dashboard() {
 
       <Card>
         <CardHeader className="pb-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <CardTitle className="text-lg font-medium">All Patients</CardTitle>
-            <div className="relative w-full sm:w-80">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input
-                type="search"
-                placeholder="Search by name or phone..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9"
-                data-testid="input-patient-search"
-              />
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <CardTitle className="text-lg font-medium">All Patients</CardTitle>
+              <div className="relative w-full sm:w-80">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input
+                  type="search"
+                  placeholder="Search by name or phone..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-9"
+                  data-testid="input-patient-search"
+                />
+              </div>
+            </div>
+            <div className="flex gap-2 flex-wrap">
+              <button
+                onClick={() => setPatientFilter("all")}
+                className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${patientFilter === "all"
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-muted hover:bg-muted/80"
+                  }`}
+              >
+                All ({filteredPatients.length})
+              </button>
+              <button
+                onClick={() => setPatientFilter("new")}
+                className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${patientFilter === "new"
+                  ? "bg-blue-600 text-white"
+                  : "bg-blue-100 text-blue-700 hover:bg-blue-200"
+                  }`}
+              >
+                New This Month ({newPatientsThisMonth.length})
+              </button>
+              <button
+                onClick={() => setPatientFilter("repeat")}
+                className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${patientFilter === "repeat"
+                  ? "bg-purple-600 text-white"
+                  : "bg-purple-100 text-purple-700 hover:bg-purple-200"
+                  }`}
+              >
+                Repeat Visits ({repeatPatientsThisMonth.length})
+              </button>
             </div>
           </div>
         </CardHeader>
@@ -442,7 +510,7 @@ export default function Dashboard() {
                 <Skeleton key={i} className="h-16 w-full" />
               ))}
             </div>
-          ) : filteredPatients.length === 0 ? (
+          ) : displayedPatients.length === 0 ? (
             <div className="text-center py-12">
               <Users className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
               <h3 className="text-lg font-medium mb-1">No patients found</h3>
@@ -454,7 +522,7 @@ export default function Dashboard() {
             </div>
           ) : (
             <div className="space-y-2">
-              {filteredPatients.map((patient) => {
+              {displayedPatients.map((patient) => {
                 const patientBills = bills.filter((b) => b.patientId === patient.id);
                 const hasPending = patientBills.some((b) => b.pendingAmount > 0);
 
