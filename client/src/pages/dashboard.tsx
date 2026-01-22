@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
-import { Search, Users, Calendar, TrendingUp, AlertCircle, ChevronRight, Phone } from "lucide-react";
+import { Search, Users, Calendar, TrendingUp, AlertCircle, ChevronRight, Phone, ChevronDown, Receipt } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,6 +13,7 @@ import { format, startOfMonth, endOfMonth, isWithinInterval } from "date-fns";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useForm } from "react-hook-form";
@@ -30,6 +31,7 @@ export default function Dashboard() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [selectedPatientForAppointment, setSelectedPatientForAppointment] = useState<Patient | null>(null);
+  const [selectedBillForDetails, setSelectedBillForDetails] = useState<Bill | null>(null);
 
   const form = useForm<AppointmentForm>({
     resolver: zodResolver(insertAppointmentSchema),
@@ -303,22 +305,72 @@ export default function Dashboard() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Bills with Pending
-            </CardTitle>
-            <AlertCircle className="w-4 h-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-destructive" data-testid="text-pending-payments">
-              {patientsLoading ? <Skeleton className="h-8 w-16" /> : pendingBills.length}
+        <Popover>
+          <PopoverTrigger asChild>
+            <Card className="cursor-pointer hover:shadow-md transition-shadow">
+              <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">
+                  Bills with Pending
+                </CardTitle>
+                <div className="flex items-center gap-1">
+                  <AlertCircle className="w-4 h-4 text-muted-foreground" />
+                  <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-destructive" data-testid="text-pending-payments">
+                  {patientsLoading ? <Skeleton className="h-8 w-16" /> : pendingBills.length}
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Click to view all pending bills
+                </p>
+              </CardContent>
+            </Card>
+          </PopoverTrigger>
+          <PopoverContent className="w-80 p-0 max-h-96 overflow-hidden" align="start">
+            <div className="p-3 border-b bg-muted/50">
+              <h4 className="font-semibold text-sm">Pending Bills ({pendingBills.length})</h4>
+              <p className="text-xs text-muted-foreground">Click on a bill to view details</p>
             </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              Bills with balance due
-            </p>
-          </CardContent>
-        </Card>
+            <div className="max-h-72 overflow-y-auto">
+              {pendingBills.length === 0 ? (
+                <div className="p-4 text-center text-muted-foreground text-sm">
+                  No pending bills
+                </div>
+              ) : (
+                pendingBills
+                  .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+                  .map((bill) => (
+                    <div
+                      key={bill.id}
+                      className="flex items-center justify-between p-3 hover:bg-muted/50 cursor-pointer border-b last:border-b-0 transition-colors"
+                      onClick={() => setSelectedBillForDetails(bill)}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full bg-destructive/10 flex items-center justify-center">
+                          <Receipt className="w-4 h-4 text-destructive" />
+                        </div>
+                        <div>
+                          <p className="font-medium text-sm">{bill.patientName}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {format(new Date(bill.date), "dd MMM yyyy")}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <p className="font-semibold text-destructive text-sm">
+                          ₹{bill.pendingAmount.toLocaleString()}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          of ₹{bill.finalAmount.toLocaleString()}
+                        </p>
+                      </div>
+                    </div>
+                  ))
+              )}
+            </div>
+          </PopoverContent>
+        </Popover>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
@@ -649,6 +701,98 @@ export default function Dashboard() {
               </div>
             </form>
           </Form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bill Details Dialog */}
+      <Dialog open={!!selectedBillForDetails} onOpenChange={(open) => !open && setSelectedBillForDetails(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Receipt className="w-5 h-5" />
+              Bill Details
+            </DialogTitle>
+          </DialogHeader>
+          {selectedBillForDetails && (
+            <div className="space-y-4">
+              {/* Patient Info */}
+              <div className="bg-muted/50 p-4 rounded-lg">
+                <h4 className="font-semibold text-lg">{selectedBillForDetails.patientName}</h4>
+                <p className="text-sm text-muted-foreground">
+                  Bill Date: {format(new Date(selectedBillForDetails.date), "dd MMM yyyy")}
+                </p>
+              </div>
+
+              {/* Treatments */}
+              {selectedBillForDetails.treatments.length > 0 && (
+                <div>
+                  <h5 className="font-medium text-sm mb-2">Treatments</h5>
+                  <div className="space-y-1">
+                    {selectedBillForDetails.treatments.map((t, i) => (
+                      <div key={i} className="flex justify-between text-sm py-1 border-b last:border-b-0">
+                        <span>{t.treatmentName}</span>
+                        <span className="font-medium">₹{t.price.toLocaleString()}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Medicines */}
+              {selectedBillForDetails.medicines.length > 0 && (
+                <div>
+                  <h5 className="font-medium text-sm mb-2">Medicines</h5>
+                  <div className="space-y-1">
+                    {selectedBillForDetails.medicines.map((m, i) => (
+                      <div key={i} className="flex justify-between text-sm py-1 border-b last:border-b-0">
+                        <span>{m.medicineName} × {m.quantity}</span>
+                        <span className="font-medium">₹{m.total.toLocaleString()}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Payment Summary */}
+              <div className="bg-muted/30 p-4 rounded-lg space-y-2 border">
+                <div className="flex justify-between text-sm">
+                  <span>Final Amount:</span>
+                  <span className="font-semibold">₹{selectedBillForDetails.finalAmount.toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between text-sm text-green-600">
+                  <span>Amount Paid:</span>
+                  <span className="font-semibold">₹{selectedBillForDetails.amountPaid.toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between text-sm text-destructive border-t pt-2">
+                  <span className="font-semibold">Pending Amount:</span>
+                  <span className="font-bold">₹{selectedBillForDetails.pendingAmount.toLocaleString()}</span>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex gap-2 pt-2">
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => {
+                    setSelectedBillForDetails(null);
+                    setLocation("/billing");
+                  }}
+                >
+                  Go to Bills Page
+                </Button>
+                <Button
+                  className="flex-1"
+                  onClick={() => {
+                    setSelectedBillForDetails(null);
+                    setLocation(`/patient/${selectedBillForDetails.patientId}`);
+                  }}
+                >
+                  View Patient Profile
+                </Button>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>
