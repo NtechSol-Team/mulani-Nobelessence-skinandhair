@@ -64,6 +64,7 @@ export interface IStorage {
   getBills(): Promise<Bill[]>;
   getBill(id: string): Promise<Bill | undefined>;
   createBill(bill: InsertBill, patientName: string): Promise<Bill>;
+  createBillWithStockUpdate(bill: InsertBill, patientName: string): Promise<Bill>;
   updateBill(id: string, bill: InsertBill, patientName: string): Promise<Bill | undefined>;
   updateBillPayment(id: string, amountPaid: number): Promise<Bill | undefined>;
   updatePatientBillsName(patientId: string, patientName: string): Promise<void>;
@@ -951,6 +952,143 @@ export class PostgresStorage implements IStorage {
     }
   }
 
+  async createBillWithStockUpdate(insertBill: InsertBill, patientName: string): Promise<Bill> {
+    await this.waitForReady();
+    const client = await pool.connect();
+
+    try {
+      await client.query('BEGIN');
+
+      // 1. Validate and Update Stock
+      if (insertBill.medicines && insertBill.medicines.length > 0) {
+        for (const med of insertBill.medicines) {
+          if (med.medicineId) {
+            const dbMedId = this.convertId("medicines", med.medicineId);
+
+            // Check stock with lock
+            const { rows } = await client.query<DbMedicineRow>(
+              "SELECT * FROM medicines WHERE id = $1 FOR UPDATE",
+              [dbMedId]
+            );
+
+            const medicine = rows[0] ? mapMedicine(rows[0]) : undefined;
+
+            if (!medicine) {
+              throw new Error(`Medicine with ID ${med.medicineId} not found`);
+            }
+
+            if (medicine.quantity < med.quantity) {
+              throw new Error(`Insufficient stock for ${medicine.name}. Available: ${medicine.quantity}, Required: ${med.quantity}`);
+            }
+
+            // Deduct stock
+            await client.query(
+              "UPDATE medicines SET quantity = quantity - $2 WHERE id = $1",
+              [dbMedId, med.quantity]
+            );
+          }
+        }
+      }
+
+      // 2. Create Bill
+      const patientIdValue = this.convertId("patients", insertBill.patientId);
+      const pendingAmount = Math.max(0, insertBill.finalAmount - insertBill.amountPaid);
+      const useNumericId = this.usesNumericId("bills");
+
+      const query = useNumericId
+        ? `INSERT INTO bills(
+              patient_id,
+              patient_name,
+              date,
+              treatments,
+              medicines,
+              treatment_total,
+              medicine_total,
+              grand_total,
+              discount,
+              final_amount,
+              amount_paid,
+              pending_amount
+            )
+          VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        RETURNING id, patient_id, patient_name, date, treatments, medicines,
+            treatment_total, medicine_total, grand_total, discount, final_amount, amount_paid, pending_amount`
+        : `INSERT INTO bills(
+              id,
+              patient_id,
+              patient_name,
+              date,
+              treatments,
+              medicines,
+              treatment_total,
+              medicine_total,
+              grand_total,
+              discount,
+              final_amount,
+              amount_paid,
+              pending_amount
+            )
+          VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        RETURNING id, patient_id, patient_name, date, treatments, medicines,
+            treatment_total, medicine_total, grand_total, discount, final_amount, amount_paid, pending_amount`;
+
+      const params = useNumericId
+        ? [
+          patientIdValue,
+          patientName,
+          insertBill.date,
+          JSON.stringify(insertBill.treatments || []),
+          JSON.stringify(insertBill.medicines || []),
+          insertBill.treatmentTotal,
+          insertBill.medicineTotal,
+          insertBill.grandTotal,
+          insertBill.discount,
+          insertBill.finalAmount,
+          insertBill.amountPaid,
+          pendingAmount,
+        ]
+        : [
+          randomUUID(),
+          patientIdValue,
+          patientName,
+          insertBill.date,
+          JSON.stringify(insertBill.treatments || []),
+          JSON.stringify(insertBill.medicines || []),
+          insertBill.treatmentTotal,
+          insertBill.medicineTotal,
+          insertBill.grandTotal,
+          insertBill.discount,
+          insertBill.finalAmount,
+          insertBill.amountPaid,
+          pendingAmount,
+        ];
+
+      const { rows } = await client.query<DbBillRow>(query, params);
+
+      if (!rows[0]) {
+        throw new Error("Failed to create bill - no rows returned");
+      }
+
+      await client.query('COMMIT');
+
+      const bill = mapBill(rows[0]);
+
+      // Invalidate caches
+      this.cache.invalidate("bills");
+      this.cache.invalidate("bill:");
+      this.cache.invalidate("medicines"); // Stocks changed
+      this.cache.invalidate("medicine:");
+
+      return bill;
+
+    } catch (error) {
+      await client.query('ROLLBACK');
+      console.error("Error in createBillWithStockUpdate:", error);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
   async updateBill(id: string, insertBill: InsertBill, patientName: string): Promise<Bill | undefined> {
     await this.waitForReady();
     const dbId = this.convertId("bills", id);
@@ -991,7 +1129,7 @@ export class PostgresStorage implements IStorage {
     const bill = rows[0] ? mapBill(rows[0]) : undefined;
     if (bill) {
       this.cache.invalidate("bills");
-      this.cache.invalidate(`bill:${bill.id} `);
+      this.cache.invalidate(`bill: ${ bill.id } `);
     }
     return bill;
   }
@@ -1011,7 +1149,7 @@ export class PostgresStorage implements IStorage {
     const bill = rows[0] ? mapBill(rows[0]) : undefined;
     if (bill) {
       this.cache.invalidate("bills");
-      this.cache.invalidate(`bill:${bill.id} `);
+      this.cache.invalidate(`bill: ${ bill.id } `);
     }
     return bill;
   }
@@ -1023,7 +1161,7 @@ export class PostgresStorage implements IStorage {
     const success = (result.rowCount ?? 0) > 0;
     if (success) {
       this.cache.invalidate("bills");
-      this.cache.invalidate(`bill:${normalizeId(id)} `);
+      this.cache.invalidate(`bill: ${ normalizeId(id) } `);
     }
     return success;
   }
@@ -1057,7 +1195,7 @@ export class PostgresStorage implements IStorage {
   async getExpense(id: string): Promise<Expense | undefined> {
     await this.waitForReady();
     const normalizedId = normalizeId(id);
-    const cacheKey = `expense:${normalizedId} `;
+    const cacheKey = `expense: ${ normalizedId } `;
     const cached = this.cache.get<Expense>(cacheKey);
     if (cached) {
       return cached;
@@ -1116,7 +1254,7 @@ export class PostgresStorage implements IStorage {
     const expense = rows[0] ? mapExpense(rows[0]) : undefined;
     if (expense) {
       this.cache.invalidate("expenses");
-      this.cache.invalidate(`expense:${expense.id} `);
+      this.cache.invalidate(`expense: ${ expense.id } `);
     }
     return expense;
   }
@@ -1128,7 +1266,7 @@ export class PostgresStorage implements IStorage {
     const success = (result.rowCount ?? 0) > 0;
     if (success) {
       this.cache.invalidate("expenses");
-      this.cache.invalidate(`expense:${normalizeId(id)} `);
+      this.cache.invalidate(`expense: ${ normalizeId(id) } `);
     }
     return success;
   }
@@ -1258,7 +1396,7 @@ export class PostgresStorage implements IStorage {
   async getAppointment(id: string): Promise<Appointment | undefined> {
     await this.waitForReady();
     const normalizedId = normalizeId(id);
-    const cacheKey = `appointment:${normalizedId}`;
+    const cacheKey = `appointment: ${ normalizedId }`;
     const cached = this.cache.get<Appointment>(cacheKey);
     if (cached) {
       return cached;
@@ -1281,7 +1419,7 @@ export class PostgresStorage implements IStorage {
   async getAppointmentsByPatient(patientId: string): Promise<Appointment[]> {
     await this.waitForReady();
     const normalizedPatientId = normalizeId(patientId);
-    const cacheKey = `appointments:patient:${normalizedPatientId}`;
+    const cacheKey = `appointments: patient: ${ normalizedPatientId }`;
     const cached = this.cache.get<Appointment[]>(cacheKey);
     if (cached) {
       return cached;
@@ -1329,7 +1467,8 @@ export class PostgresStorage implements IStorage {
     });
 
     this.cache.invalidate("appointments");
-    this.cache.invalidate(`appointments:patient:${normalizeId(insert.patientId)}`);
+    this.cache.invalidate(`appointments: patient: ${ normalizeId(insert.patientId)
+        } `);
     return appointment;
   }
 
@@ -1358,8 +1497,8 @@ export class PostgresStorage implements IStorage {
     });
 
     this.cache.invalidate("appointments");
-    this.cache.invalidate(`appointment:${appointment.id}`);
-    this.cache.invalidate(`appointments:patient:${normalizeId(insert.patientId)}`);
+    this.cache.invalidate(`appointment:${ appointment.id } `);
+    this.cache.invalidate(`appointments: patient:${ normalizeId(insert.patientId) } `);
     return appointment;
   }
 
@@ -1375,9 +1514,9 @@ export class PostgresStorage implements IStorage {
 
     if (success) {
       this.cache.invalidate("appointments");
-      this.cache.invalidate(`appointment:${normalizeId(id)}`);
+      this.cache.invalidate(`appointment:${ normalizeId(id) } `);
       if (appt) {
-        this.cache.invalidate(`appointments:patient:${appt.patientId}`);
+        this.cache.invalidate(`appointments: patient:${ appt.patientId } `);
       }
     }
     return success;

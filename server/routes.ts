@@ -327,29 +327,14 @@ export async function registerRoutes(
         return res.status(400).json({ error: "Patient not found" });
       }
 
-      // Reduce medicine stock (only if medicines exist)
-      if (validated.medicines && validated.medicines.length > 0) {
-        for (const med of validated.medicines) {
-          if (med.medicineId) {
-            const medicine = await storage.getMedicine(med.medicineId);
-            if (!medicine) {
-              return res.status(400).json({ error: `Medicine with ID ${med.medicineId} not found` });
-            }
-            if (medicine.quantity < med.quantity) {
-              return res.status(400).json({
-                error: `Insufficient stock for ${med.medicineName}. Available: ${medicine.quantity}, Required: ${med.quantity}`
-              });
-            }
-            await storage.updateMedicineStock(med.medicineId, -med.quantity);
-          }
-        }
-      }
-
-      const bill = await storage.createBill(validated, patient.name);
+      const bill = await storage.createBillWithStockUpdate(validated, patient.name);
       res.status(201).json(bill);
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: error.errors });
+      }
+      if (error instanceof Error && (error.message.startsWith("Insufficient stock") || error.message.includes("not found"))) {
+        return res.status(400).json({ error: error.message });
       }
       console.error("Error creating bill:", error);
       res.status(500).json({ error: "Failed to create bill", details: error instanceof Error ? error.message : String(error) });
