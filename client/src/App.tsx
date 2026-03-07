@@ -72,7 +72,14 @@ function App() {
             </div>
             <footer className="fixed left-0 bottom-0 z-40 w-full h-12 border-t bg-card/95 text-sm flex items-center justify-center text-muted-foreground backdrop-blur">
               <div className="max-w-[1600px] mx-auto px-4 text-center">
-                Copyright © {new Date().getFullYear()} Nakrani Techno & Solution LLP. All Rights Reserved.
+                <a
+                  href="https://nakranitechno.onrender.com"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="hover:underline hover:text-primary transition-colors cursor-pointer"
+                >
+                  Copyright © {new Date().getFullYear()} Nakrani Techno & Solution LLP. All Rights Reserved.
+                </a>
               </div>
             </footer>
             <Toaster />

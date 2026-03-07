@@ -26,7 +26,9 @@ type AppointmentForm = z.infer<typeof insertAppointmentSchema>;
 
 export default function Dashboard() {
   const [searchQuery, setSearchQuery] = useState("");
-  const [patientFilter, setPatientFilter] = useState<"all" | "new" | "repeat">("all");
+  const [patientFilter, setPatientFilter] = useState<"all" | "new" | "repeat" | "upcoming">("all");
+  const [currentPage, setCurrentPage] = useState(1);
+  const ITEMS_PER_PAGE = 20;
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -182,12 +184,47 @@ export default function Dashboard() {
           const bLastVisit = bVisits.length > 0 ? Math.max(...bVisits.map(v => new Date(v.date).getTime())) : 0;
           return bLastVisit - aLastVisit; // Most recent first
         });
+    } else if (patientFilter === "upcoming") {
+      basePatients = filteredPatients
+        .filter((patient) => {
+          const nextVisit = appointments
+            .filter(a => a.patientId === patient.id && a.status === "Scheduled")
+            .find(a => new Date(a.date) >= new Date(new Date().setHours(24, 0, 0, 0))); // Start from tomorrow
+          return !!nextVisit;
+        })
+        .sort((a, b) => {
+          const aNextVisit = appointments
+            .filter(ap => ap.patientId === a.id && ap.status === "Scheduled")
+            .sort((ap1, ap2) => new Date(ap1.date).getTime() - new Date(ap2.date).getTime())
+            .find(ap => new Date(ap.date) >= new Date(new Date().setHours(24, 0, 0, 0)));
+
+          const bNextVisit = appointments
+            .filter(ap => ap.patientId === b.id && ap.status === "Scheduled")
+            .sort((ap1, ap2) => new Date(ap1.date).getTime() - new Date(ap2.date).getTime())
+            .find(ap => new Date(ap.date) >= new Date(new Date().setHours(24, 0, 0, 0)));
+
+          if (!aNextVisit) return 1;
+          if (!bNextVisit) return -1;
+          return new Date(aNextVisit.date).getTime() - new Date(bNextVisit.date).getTime();
+        });
     }
 
     return basePatients;
   };
 
   const displayedPatients = getDisplayedPatients();
+  const totalPages = Math.ceil(displayedPatients.length / ITEMS_PER_PAGE);
+
+  // Reset to first page when filter or search changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [patientFilter, searchQuery]);
+
+  // Get current page entries
+  const paginatedPatients = displayedPatients.slice(
+    (currentPage - 1) * ITEMS_PER_PAGE,
+    currentPage * ITEMS_PER_PAGE
+  );
 
   return (
     <div className="p-6 max-w-[1600px] mx-auto space-y-6">
@@ -555,6 +592,15 @@ export default function Dashboard() {
               >
                 Repeat Visits ({repeatPatientsThisMonth.length})
               </button>
+              <button
+                onClick={() => setPatientFilter("upcoming")}
+                className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${patientFilter === "upcoming"
+                  ? "bg-blue-600 text-white"
+                  : "bg-blue-100 text-blue-700 hover:bg-blue-200"
+                  }`}
+              >
+                Upcoming Visits
+              </button>
             </div>
           </div>
         </CardHeader>
@@ -577,66 +623,113 @@ export default function Dashboard() {
             </div>
           ) : (
             <div className="space-y-2">
-              {displayedPatients.map((patient) => {
-                const patientBills = bills.filter((b) => b.patientId === patient.id);
-                const hasPending = patientBills.some((b) => b.pendingAmount > 0);
+              <div className="space-y-2">
+                {paginatedPatients.map((patient) => {
+                  const patientBills = bills.filter((b) => b.patientId === patient.id);
+                  const hasPending = patientBills.some((b) => b.pendingAmount > 0);
 
-                // Get last visit date for this patient
-                const patientVisits = visits.filter((v) => v.patientId === patient.id);
-                const lastVisit = patientVisits.length > 0
-                  ? patientVisits.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0]
-                  : null;
+                  // Get last visit date for this patient
+                  const patientVisits = visits.filter((v) => v.patientId === patient.id);
+                  const lastVisit = patientVisits.length > 0
+                    ? patientVisits.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0]
+                    : null;
 
-                return (
-                  <Link
-                    key={patient.id}
-                    href={`/patient/${patient.id}`}
-                    className="block"
-                  >
-                    <div
-                      className="flex items-center justify-between p-4 rounded-lg border bg-card hover-elevate cursor-pointer transition-all"
-                      data-testid={`card-patient-${patient.id}`}
+                  // Get next scheduled visit
+                  const nextVisit = appointments
+                    .filter(a => a.patientId === patient.id && a.status === "Scheduled")
+                    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+                    .find(a => new Date(a.date) >= new Date(new Date().setHours(0, 0, 0, 0)));
+
+                  return (
+                    <Link
+                      key={patient.id}
+                      href={`/patient/${patient.id}`}
+                      className="block"
                     >
-                      <div className="flex items-center gap-4">
-                        <div className="flex items-center justify-center w-10 h-10 rounded-full bg-primary/10 text-primary font-medium">
-                          {patient.name.charAt(0).toUpperCase()}
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="font-medium" data-testid={`text-patient-name-${patient.id}`}>
-                              {patient.name}
-                            </span>
-                            {hasPending && (
-                              <Badge variant="destructive" className="text-xs">
-                                Pending
-                              </Badge>
-                            )}
+                      <div
+                        className="flex items-center justify-between p-4 rounded-lg border bg-card hover-elevate cursor-pointer transition-all"
+                        data-testid={`card-patient-${patient.id}`}
+                      >
+                        <div className="flex items-center gap-4">
+                          <div className="flex items-center justify-center w-10 h-10 rounded-full bg-primary/10 text-primary font-medium">
+                            {patient.name.charAt(0).toUpperCase()}
                           </div>
-                          <div className="flex items-center gap-2 text-sm text-muted-foreground flex-wrap">
-                            <Phone className="w-3 h-3" />
-                            <span data-testid={`text-patient-phone-${patient.id}`}>
-                              {patient.phone}
-                            </span>
-                            <span className="text-border">|</span>
-                            <span>
-                              Registered: {format(new Date(patient.registrationDate), "dd MMM yyyy")}
-                            </span>
-                            {lastVisit && (
-                              <>
-                                <span className="text-border">|</span>
-                                <span>
-                                  Last Visit: {format(new Date(lastVisit.date), "dd MMM yyyy")}
-                                </span>
-                              </>
-                            )}
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium" data-testid={`text-patient-name-${patient.id}`}>
+                                {patient.name}
+                              </span>
+                              {hasPending && (
+                                <Badge variant="destructive" className="text-xs">
+                                  Pending
+                                </Badge>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2 text-sm text-muted-foreground flex-wrap">
+                              <Phone className="w-3 h-3" />
+                              <span data-testid={`text-patient-phone-${patient.id}`}>
+                                {patient.phone}
+                              </span>
+                              <span className="text-border">|</span>
+                              <span>
+                                Registered: {format(new Date(patient.registrationDate), "dd MMM yyyy")}
+                              </span>
+                              {lastVisit && (
+                                <>
+                                  <span className="text-border">|</span>
+                                  <span>
+                                    Last Visit: {format(new Date(lastVisit.date), "dd MMM yyyy")}
+                                  </span>
+                                </>
+                              )}
+                              {nextVisit && (
+                                <>
+                                  <span className="text-border">|</span>
+                                  <span className="text-blue-600 font-medium flex items-center gap-1">
+                                    <Calendar className="w-3 h-3" />
+                                    Next Visit: {format(new Date(nextVisit.date), "dd MMM yyyy")}
+                                    {nextVisit.reason && ` (${nextVisit.reason})`}
+                                  </span>
+                                </>
+                              )}
+                            </div>
                           </div>
                         </div>
+                        <ChevronRight className="w-5 h-5 text-muted-foreground" />
                       </div>
-                      <ChevronRight className="w-5 h-5 text-muted-foreground" />
+                    </Link>
+                  );
+                })}
+              </div>
+
+              {totalPages > 1 && (
+                <div className="flex items-center justify-between pt-4 border-t mt-4">
+                  <p className="text-sm text-muted-foreground">
+                    Showing {(currentPage - 1) * ITEMS_PER_PAGE + 1} to {Math.min(currentPage * ITEMS_PER_PAGE, displayedPatients.length)} of {displayedPatients.length} patients
+                  </p>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                      disabled={currentPage === 1}
+                    >
+                      Previous
+                    </Button>
+                    <div className="flex items-center px-4 text-sm font-medium">
+                      Page {currentPage} of {totalPages}
                     </div>
-                  </Link>
-                );
-              })}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                      disabled={currentPage === totalPages}
+                    >
+                      Next
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </CardContent>
