@@ -10,6 +10,7 @@ import {
   ChevronDown,
   ChevronUp,
   Activity,
+  Users,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -33,6 +34,8 @@ import {
 import {
   BarChart,
   Bar,
+  LineChart,
+  Line,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -42,7 +45,7 @@ import {
   Pie,
   Cell,
 } from "recharts";
-import type { Bill, Medicine, Expense } from "@shared/schema";
+import type { Bill, Medicine, Expense, Patient } from "@shared/schema";
 import { extractPaginatedData } from "@/lib/utils";
 import {
   format,
@@ -60,6 +63,7 @@ export default function Reports() {
   const [customEndDate, setCustomEndDate] = useState<string>("");
   const [medicineReportTab, setMedicineReportTab] = useState<"period" | "monthly" | "overall">("period");
   const [expandedMonths, setExpandedMonths] = useState<Set<string>>(new Set());
+  const [treatmentTrendMode, setTreatmentTrendMode] = useState<"count" | "revenue">("count");
   const { data: billsResponse, isLoading: billsLoading } = useQuery({
     queryKey: ["/api/bills"],
   });
@@ -75,7 +79,12 @@ export default function Reports() {
   });
   const expenses = extractPaginatedData<Expense>(expensesResponse);
 
-  const isLoading = billsLoading || medicinesLoading || expensesLoading;
+  const { data: patientsResponse, isLoading: patientsLoading } = useQuery({
+    queryKey: ["/api/patients"],
+  });
+  const patients = extractPaginatedData<Patient>(patientsResponse);
+
+  const isLoading = billsLoading || medicinesLoading || expensesLoading || patientsLoading;
 
   const today = new Date();
   const monthStart = startOfMonth(today);
@@ -232,12 +241,34 @@ export default function Reports() {
 
     const revenue = monthBills.reduce((sum, b) => sum + (b.finalAmount !== undefined && b.finalAmount !== null ? b.finalAmount : b.grandTotal), 0);
     const expenseTotal = monthExpenses.reduce((sum, e) => sum + e.amount, 0);
+    const uniquePatientIds = new Set(monthBills.map(b => b.patientId));
+
+    // New patients: Registered within this month
+    const newPatients = patients.filter((p) => {
+      const regDate = new Date(p.registrationDate);
+      return isWithinInterval(regDate, { start, end });
+    }).length;
+
+    // Repeat patients: Visited this month but registered before this month
+    let repeatPatients = 0;
+    uniquePatientIds.forEach(pid => {
+      const p = patients.find(patient => patient.id === pid);
+      if (p) {
+        const regDate = new Date(p.registrationDate);
+        if (regDate < start) {
+          repeatPatients++;
+        }
+      }
+    });
 
     return {
       month: format(date, "MMM"),
       revenue,
       expenses: expenseTotal,
       profit: revenue - expenseTotal,
+      patients: uniquePatientIds.size,
+      newPatients,
+      repeatPatients,
     };
   });
 
@@ -247,7 +278,7 @@ export default function Reports() {
   ].filter((item) => item.value > 0);
 
   // Treatment Trends - Count treatment frequency from bills
-  const treatmentTrends = thisMonthBills.reduce((acc, bill) => {
+  const rawTreatmentTrends = thisMonthBills.reduce((acc, bill) => {
     bill.treatments.forEach((treatment) => {
       const existing = acc.find((t) => t.treatmentId === treatment.treatmentId);
       if (existing) {
@@ -263,12 +294,14 @@ export default function Reports() {
       }
     });
     return acc;
-  }, [] as { treatmentId: string; treatmentName: string; count: number; totalRevenue: number }[])
-    .sort((a, b) => b.count - a.count)
+  }, [] as { treatmentId: string; treatmentName: string; count: number; totalRevenue: number }[]);
+
+  const treatmentTrends = rawTreatmentTrends
+    .sort((a, b) => treatmentTrendMode === "count" ? b.count - a.count : b.totalRevenue - a.totalRevenue)
     .slice(0, 5); // Top 5 treatments
 
   // Calculate max count for progress bar percentages
-  const maxTreatmentCount = treatmentTrends.length > 0 ? treatmentTrends[0].count : 0;
+  const maxTreatmentValue = treatmentTrends.length > 0 ? treatmentTrends[0][treatmentTrendMode === 'count' ? 'count' : 'totalRevenue'] : 0;
 
   return (
     <div className="p-6 max-w-[1600px] mx-auto space-y-6">
@@ -523,24 +556,107 @@ export default function Reports() {
         </Card>
       </div>
 
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-lg">
+            <Users className="w-5 h-5 text-primary" />
+            Patient Visits (6-Month Trend)
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <Skeleton className="h-[220px] w-full" />
+          ) : (
+            <ResponsiveContainer width="100%" height={220}>
+              <LineChart data={last6Months} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                <XAxis
+                  dataKey="month"
+                  stroke="hsl(var(--muted-foreground))"
+                  fontSize={12}
+                  tickLine={false}
+                  axisLine={false}
+                />
+                <YAxis
+                  stroke="hsl(var(--muted-foreground))"
+                  fontSize={12}
+                  tickLine={false}
+                  axisLine={false}
+                />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: "hsl(var(--card))",
+                    border: "1px solid hsl(var(--border))",
+                    borderRadius: "8px",
+                  }}
+                  labelStyle={{ color: "hsl(var(--foreground))" }}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="newPatients"
+                  stroke="hsl(200, 60%, 50%)"
+                  strokeWidth={2}
+                  name="New Patients"
+                  dot={{ r: 4 }}
+                  activeDot={{ r: 6 }}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="repeatPatients"
+                  stroke="hsl(280, 55%, 55%)"
+                  strokeWidth={2}
+                  name="Repeat Patients"
+                  dot={{ r: 4 }}
+                  activeDot={{ r: 6 }}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Treatment Trends Chart */}
       <Card>
         <CardHeader className="pb-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
               <CardTitle className="flex items-center gap-2 text-lg">
                 <Activity className="w-5 h-5 text-primary" />
                 Top 5 Treatment Trends
               </CardTitle>
               <p className="text-sm text-muted-foreground mt-1">
-                Most popular treatments based on billing frequency
+                Most popular treatments based on billing {treatmentTrendMode === 'count' ? 'frequency' : 'revenue'}
               </p>
             </div>
-            <div className="text-right">
-              <div className="text-2xl font-bold text-primary">
-                {treatmentTrends.reduce((sum, t) => sum + t.count, 0)}
+            <div className="flex flex-col sm:flex-row sm:items-center gap-4 text-right">
+              <div className="flex p-1 bg-muted rounded-lg">
+                <button
+                  onClick={() => setTreatmentTrendMode("count")}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${treatmentTrendMode === "count"
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                    }`}
+                >
+                  By Count
+                </button>
+                <button
+                  onClick={() => setTreatmentTrendMode("revenue")}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${treatmentTrendMode === "revenue"
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                    }`}
+                >
+                  By Revenue
+                </button>
               </div>
-              <p className="text-xs text-muted-foreground">Total Treatments</p>
+              <div className="flex flex-col sm:items-end">
+                <div className="text-2xl font-bold text-primary">
+                  {treatmentTrendMode === "count"
+                    ? treatmentTrends.reduce((sum, t) => sum + t.count, 0)
+                    : `₹${treatmentTrends.reduce((sum, t) => sum + t.totalRevenue, 0).toLocaleString()}`}
+                </div>
+                <p className="text-xs text-muted-foreground">Total {treatmentTrendMode === "count" ? "Treatments" : "Revenue"}</p>
+              </div>
             </div>
           </div>
         </CardHeader>
@@ -563,7 +679,7 @@ export default function Reports() {
                   <PieChart>
                     <Pie
                       data={treatmentTrends}
-                      dataKey="count"
+                      dataKey={treatmentTrendMode === "count" ? "count" : "totalRevenue"}
                       nameKey="treatmentName"
                       cx="50%"
                       cy="50%"
@@ -586,7 +702,10 @@ export default function Reports() {
                         borderRadius: "8px",
                         padding: "8px 12px",
                       }}
-                      formatter={(value: number, name: string) => [`${value} treatments`, name]}
+                      formatter={(value: number, name: string) => [
+                        treatmentTrendMode === "count" ? `${value} treatments` : `₹${value.toLocaleString()}`,
+                        name
+                      ]}
                     />
                   </PieChart>
                 </ResponsiveContainer>
@@ -611,7 +730,8 @@ export default function Reports() {
               {/* Treatment List */}
               <div className="space-y-4">
                 {treatmentTrends.map((treatment, index) => {
-                  const percentage = maxTreatmentCount > 0 ? (treatment.count / maxTreatmentCount) * 100 : 0;
+                  const value = treatmentTrendMode === "count" ? treatment.count : treatment.totalRevenue;
+                  const percentage = maxTreatmentValue > 0 ? (value / maxTreatmentValue) * 100 : 0;
 
                   return (
                     <div
@@ -637,10 +757,10 @@ export default function Reports() {
                         </div>
                         <div className="text-right">
                           <div className="text-sm font-semibold">
-                            {treatment.count}
+                            {treatmentTrendMode === "count" ? treatment.count : `₹${treatment.totalRevenue.toLocaleString()}`}
                           </div>
                           <p className="text-xs text-muted-foreground">
-                            {treatment.count === 1 ? "treatment" : "treatments"}
+                            {treatmentTrendMode === "count" ? (treatment.count === 1 ? "treatment" : "treatments") : "revenue"}
                           </p>
                         </div>
                       </div>
