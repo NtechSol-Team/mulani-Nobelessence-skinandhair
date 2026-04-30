@@ -124,11 +124,19 @@ export default function Reports() {
     isWithinInterval(new Date(e.date), { start: dateRangeStart, end: dateRangeEnd })
   );
 
-  // Revenue = sum of finalAmount for all bills in the period
-  const thisMonthRevenue = thisMonthBills.reduce(
+  // Billed Value = sum of finalAmount for all bills in the period
+  const thisMonthBilledValue = thisMonthBills.reduce(
     (sum, b) => sum + (typeof b.finalAmount === 'number' ? b.finalAmount : parseFloat(String(b.finalAmount)) || 0),
     0
   );
+
+  // Cash Collected
+  const thisMonthPayments = paymentLedgers.filter((p) =>
+    isWithinInterval(new Date(p.date), { start: dateRangeStart, end: dateRangeEnd })
+  );
+  const cashPayments = thisMonthPayments.filter(p => p.paymentMode === "Cash").reduce((sum, p) => sum + p.amount, 0);
+  const onlinePayments = thisMonthPayments.filter(p => p.paymentMode === "Online").reduce((sum, p) => sum + p.amount, 0);
+  const thisMonthCashCollected = cashPayments + onlinePayments;
 
   // Total discount = sum of (grandTotal - finalAmount) for all bills
   const thisMonthDiscount = thisMonthBills.reduce(
@@ -149,13 +157,6 @@ export default function Reports() {
     0
   );
   const thisMonthExpenseTotal = thisMonthExpenses.reduce((sum, e) => sum + e.amount, 0);
-
-  // Payment Breakdown
-  const thisMonthPayments = paymentLedgers.filter((p) =>
-    isWithinInterval(new Date(p.date), { start: dateRangeStart, end: dateRangeEnd })
-  );
-  const cashPayments = thisMonthPayments.filter(p => p.paymentMode === "Cash").reduce((sum, p) => sum + p.amount, 0);
-  const onlinePayments = thisMonthPayments.filter(p => p.paymentMode === "Online").reduce((sum, p) => sum + p.amount, 0);
 
   // Medicine profit data filtered by selected date range
   const filteredMedicineProfitData = medicines.map((medicine) => {
@@ -237,7 +238,7 @@ export default function Reports() {
 
   // Use filtered data for the medicine profit card
   const totalMedicineProfit = filteredMedicineProfitData.reduce((sum, m) => sum + m.profit, 0);
-  const totalProfit = thisMonthRevenue - thisMonthExpenseTotal;
+  const totalProfit = thisMonthCashCollected - thisMonthExpenseTotal;
 
   const last6Months = Array.from({ length: 6 }, (_, i) => {
     const date = subMonths(today, 5 - i);
@@ -251,7 +252,11 @@ export default function Reports() {
       isWithinInterval(new Date(e.date), { start, end })
     );
 
-    const revenue = monthBills.reduce((sum, b) => sum + (b.finalAmount !== undefined && b.finalAmount !== null ? b.finalAmount : b.grandTotal), 0);
+    const monthPayments = paymentLedgers.filter((p) =>
+      isWithinInterval(new Date(p.date), { start, end })
+    );
+
+    const revenue = monthPayments.reduce((sum, p) => sum + p.amount, 0);
     const expenseTotal = monthExpenses.reduce((sum, e) => sum + e.amount, 0);
     const uniquePatientIds = new Set(monthBills.map(b => b.patientId));
 
@@ -364,25 +369,52 @@ export default function Reports() {
         </CardContent>
       </Card>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
-              Monthly Revenue
+              Billed Value
+            </CardTitle>
+            <Activity className="w-4 h-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold" data-testid="text-billed-value">
+              {isLoading ? (
+                <Skeleton className="h-8 w-24" />
+              ) : (
+                `₹${thisMonthBilledValue.toLocaleString()}`
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              From {thisMonthBills.length} bills created
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card className="border-primary/20 bg-primary/5">
+          <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+            <CardTitle className="text-sm font-medium text-primary">
+              Cash Collected
             </CardTitle>
             <TrendingUp className="w-4 h-4 text-primary" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold" data-testid="text-monthly-revenue">
+            <div className="text-2xl font-bold text-primary" data-testid="text-cash-collected">
               {isLoading ? (
                 <Skeleton className="h-8 w-24" />
               ) : (
-                `₹${thisMonthRevenue.toLocaleString()}`
+                `₹${thisMonthCashCollected.toLocaleString()}`
               )}
             </div>
-            <div className="text-xs text-muted-foreground mt-2 flex items-center justify-between">
-              <span>Cash: <span className="font-medium text-foreground">₹{cashPayments.toLocaleString()}</span></span>
-              <span>Online: <span className="font-medium text-foreground">₹{onlinePayments.toLocaleString()}</span></span>
+            <div className="text-[11px] text-muted-foreground mt-1 flex flex-col gap-0.5">
+              <div className="flex items-center justify-between">
+                <span>Cash:</span>
+                <span className="font-medium">₹{cashPayments.toLocaleString()}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span>Online:</span>
+                <span className="font-medium">₹{onlinePayments.toLocaleString()}</span>
+              </div>
             </div>
           </CardContent>
         </Card>
