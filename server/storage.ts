@@ -15,6 +15,8 @@ import {
   type BillMedicineItem,
   type Appointment,
   type InsertAppointment,
+  type PaymentLedger,
+  type InsertPaymentLedger,
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 import { Pool } from "pg";
@@ -84,6 +86,10 @@ export interface IStorage {
   createAppointment(appointment: InsertAppointment): Promise<Appointment>;
   updateAppointment(id: string, appointment: InsertAppointment): Promise<Appointment | undefined>;
   deleteAppointment(id: string): Promise<boolean>;
+
+  // Payment Ledger
+  getPaymentLedgers(): Promise<PaymentLedger[]>;
+  createPaymentLedgerEntry(payment: InsertPaymentLedger): Promise<PaymentLedger>;
 
   // Users/Auth
   // Authentication removed
@@ -155,6 +161,15 @@ type DbAppointmentRow = {
   status: string;
 };
 
+type DbPaymentLedgerRow = {
+  id: string | number;
+  bill_id: string | number;
+  patient_id: string | number;
+  amount: number;
+  date: string;
+  payment_mode: string;
+};
+
 const createTableStatements = [
   `CREATE TABLE IF NOT EXISTS patients (
     id UUID PRIMARY KEY,
@@ -215,6 +230,15 @@ const createTableStatements = [
     status TEXT NOT NULL
   )`,
   `CREATE INDEX IF NOT EXISTS appointments_patient_idx ON appointments(patient_id)`,
+  `CREATE TABLE IF NOT EXISTS payment_ledger (
+    id UUID PRIMARY KEY,
+    bill_id UUID REFERENCES bills(id) ON DELETE CASCADE,
+    patient_id UUID REFERENCES patients(id) ON DELETE CASCADE,
+    amount DOUBLE PRECISION NOT NULL,
+    date TEXT NOT NULL,
+    payment_mode TEXT NOT NULL DEFAULT 'Cash'
+  )`,
+  `CREATE INDEX IF NOT EXISTS payment_ledger_date_idx ON payment_ledger(date)`,
 ];
 
 async function ensureTables(): Promise<void> {
@@ -231,6 +255,24 @@ async function ensureTables(): Promise<void> {
   // Backfill final_amount for existing records if it's 0 but grand_total is not (optional but good for consistency)
   // We can assume if final_amount is 0 and discount is 0, final_amount should match grand_total.
   await pool.query("UPDATE bills SET final_amount = grand_total WHERE final_amount = 0 AND discount = 0 AND grand_total > 0");
+
+  // Migration for payment_mode
+  await pool.query("ALTER TABLE payment_ledger ADD COLUMN IF NOT EXISTS payment_mode TEXT NOT NULL DEFAULT 'Cash'");
+
+  // Backfill payment_ledger
+  const { rowCount } = await pool.query("SELECT 1 FROM payment_ledger LIMIT 1");
+  if (!rowCount) {
+    try {
+      await pool.query(`
+        INSERT INTO payment_ledger (id, bill_id, patient_id, amount, date, payment_mode)
+        SELECT gen_random_uuid(), id, patient_id, amount_paid, date, 'Cash'
+        FROM bills
+        WHERE amount_paid > 0
+      `);
+    } catch (e) {
+      console.error("Error backfilling payment_ledger:", e);
+    }
+  }
 }
 
 class DataCache {
@@ -264,7 +306,7 @@ class DataCache {
   }
 }
 
-type EntityTable = "patients" | "visits" | "medicines" | "treatments" | "bills" | "expenses" | "appointments";
+type EntityTable = "patients" | "visits" | "medicines" | "treatments" | "bills" | "expenses" | "appointments" | "payment_ledger";
 type IdMode = "numeric" | "text";
 
 async function getColumnDataType(table: string, column: string): Promise<string | undefined> {
@@ -278,7 +320,7 @@ async function getColumnDataType(table: string, column: string): Promise<string 
 }
 
 async function detectIdModes(): Promise<Record<EntityTable, IdMode>> {
-  const tables: EntityTable[] = ["patients", "visits", "medicines", "treatments", "bills", "expenses", "appointments"];
+  const tables: EntityTable[] = ["patients", "visits", "medicines", "treatments", "bills", "expenses", "appointments", "payment_ledger"];
   const entries = await Promise.all(
     tables.map(async (table) => {
       const dataType = await getColumnDataType(table, "id");
@@ -385,6 +427,15 @@ const mapAppointment = (row: DbAppointmentRow): Appointment => ({
   isUpcoming: new Date(row.date) >= new Date(new Date().setHours(0, 0, 0, 0)),
 });
 
+const mapPaymentLedger = (row: DbPaymentLedgerRow): PaymentLedger => ({
+  id: normalizeId(row.id),
+  billId: normalizeId(row.bill_id),
+  patientId: normalizeId(row.patient_id),
+  amount: row.amount,
+  date: row.date,
+  paymentMode: (row.payment_mode || "Cash") as "Cash" | "Online",
+});
+
 export class PostgresStorage implements IStorage {
   private ready: Promise<void>;
   private idModes: Record<EntityTable, IdMode> = {
@@ -395,6 +446,7 @@ export class PostgresStorage implements IStorage {
     bills: "text",
     expenses: "text",
     appointments: "text",
+    payment_ledger: "text",
   };
   private cache = new DataCache(5_000);
 
@@ -1520,6 +1572,46 @@ export class PostgresStorage implements IStorage {
       }
     }
     return success;
+  }
+
+  // Payment Ledger
+  async getPaymentLedgers(): Promise<PaymentLedger[]> {
+    await this.waitForReady();
+    const cached = this.cache.get<PaymentLedger[]>("payment_ledgers");
+    if (cached) {
+      return cached;
+    }
+    const { rows } = await pool.query<DbPaymentLedgerRow>(
+      `SELECT id, bill_id, patient_id, amount, date, payment_mode FROM payment_ledger ORDER BY date DESC`
+    );
+    const ledgers = rows.map(mapPaymentLedger);
+    this.cache.set("payment_ledgers", ledgers);
+    return ledgers;
+  }
+
+  async createPaymentLedgerEntry(insert: InsertPaymentLedger): Promise<PaymentLedger> {
+    await this.waitForReady();
+    const useNumericId = this.usesNumericId("payment_ledger");
+    const query = useNumericId
+      ? `INSERT INTO payment_ledger(bill_id, patient_id, amount, date, payment_mode)
+         VALUES($1, $2, $3, $4, $5)
+         RETURNING id, bill_id, patient_id, amount, date, payment_mode`
+      : `INSERT INTO payment_ledger(id, bill_id, patient_id, amount, date, payment_mode)
+         VALUES($1, $2, $3, $4, $5, $6)
+         RETURNING id, bill_id, patient_id, amount, date, payment_mode`;
+
+    const dbBillId = this.convertId("bills", insert.billId);
+    const dbPatientId = this.convertId("patients", insert.patientId);
+
+    const params = useNumericId
+      ? [dbBillId, dbPatientId, insert.amount, insert.date, insert.paymentMode]
+      : [randomUUID(), dbBillId, dbPatientId, insert.amount, insert.date, insert.paymentMode];
+
+    const { rows } = await pool.query<DbPaymentLedgerRow>(query, params);
+    const ledger = mapPaymentLedger(rows[0]);
+
+    this.cache.invalidate("payment_ledgers");
+    return ledger;
   }
 
   // Users/Auth

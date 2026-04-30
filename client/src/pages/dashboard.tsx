@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { Patient, Bill, Visit, Appointment } from "@shared/schema";
+import type { Patient, Bill, Visit, Appointment, PaymentLedger } from "@shared/schema";
 import { extractPaginatedData } from "@/lib/utils";
 import { format, startOfMonth, endOfMonth, isWithinInterval } from "date-fns";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -34,6 +34,8 @@ export default function Dashboard() {
   const queryClient = useQueryClient();
   const [selectedPatientForAppointment, setSelectedPatientForAppointment] = useState<Patient | null>(null);
   const [selectedBillForDetails, setSelectedBillForDetails] = useState<Bill | null>(null);
+  const [selectedDate, setSelectedDate] = useState<string>(format(new Date(), "yyyy-MM-dd"));
+  const isToday = selectedDate === format(new Date(), "yyyy-MM-dd");
 
   const form = useForm<AppointmentForm>({
     resolver: zodResolver(insertAppointmentSchema),
@@ -94,30 +96,38 @@ export default function Dashboard() {
   });
   const appointments = Array.isArray(appointmentsResponse) ? appointmentsResponse : [];
 
+  const { data: paymentLedgersResponse } = useQuery({
+    queryKey: ["/api/payment-ledgers"],
+  });
+  const paymentLedgers = Array.isArray(paymentLedgersResponse) ? paymentLedgersResponse : [];
+
   const pendingBills = bills.filter((bill) => bill.pendingAmount > 0);
 
-  // Get today's date string
-  const todayDate = format(new Date(), "yyyy-MM-dd");
+  // Get selected date string
+  // (Using the selectedDate state from above)
 
-  // Get unique patient IDs from today's visits
+  // Get unique patient IDs from selected date's visits
   const patientIdsWithTodayVisits = new Set(
     visits
-      .filter((v) => v.date === todayDate)
+      .filter((v) => v.date === selectedDate)
       .map((v) => v.patientId)
   );
 
-  // Include patients registered today OR with visits today
+  // Include patients registered on selected date OR with visits on selected date
   const todayPatients = patients.filter(
-    (p) => p.registrationDate === todayDate || patientIdsWithTodayVisits.has(p.id)
+    (p) => p.registrationDate === selectedDate || patientIdsWithTodayVisits.has(p.id)
   );
 
-  // Today's bills calculations
-  const todayBills = bills.filter((bill) => bill.date === todayDate);
-  const todayPaidRevenue = todayBills.reduce((sum, bill) => sum + bill.amountPaid, 0);
+  // Selected date's bills calculations
+  const todayBills = bills.filter((bill) => bill.date === selectedDate);
   const todayPendingAmount = todayBills.reduce((sum, bill) => sum + bill.pendingAmount, 0);
 
-  // Today's Appointments
-  const todayAppointments = appointments.filter(a => a.date === todayDate);
+  // Selected date's payments (from ledger)
+  const todayPayments = paymentLedgers.filter((payment) => payment.date === selectedDate);
+  const todayPaidRevenue = todayPayments.reduce((sum, payment) => sum + payment.amount, 0);
+
+  // Selected date's Appointments
+  const todayAppointments = appointments.filter(a => a.date === selectedDate);
 
   // Total pending amount from all bills
   const totalPendingAmount = pendingBills.reduce((sum, bill) => sum + bill.pendingAmount, 0);
@@ -228,13 +238,26 @@ export default function Dashboard() {
 
   return (
     <div className="p-6 max-w-[1600px] mx-auto space-y-6">
-      <div className="flex flex-col gap-2">
-        <h1 className="text-2xl font-semibold tracking-tight" data-testid="text-page-title">
-          Dashboard
-        </h1>
-        <p className="text-muted-foreground">
-          Overview of your clinic's activity and patient records
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex flex-col gap-2">
+          <h1 className="text-2xl font-semibold tracking-tight" data-testid="text-page-title">
+            Dashboard
+          </h1>
+          <p className="text-muted-foreground">
+            Overview of your clinic's activity and patient records
+          </p>
+        </div>
+        <div className="flex items-center gap-3 bg-muted/50 p-2 rounded-lg border">
+          <label className="text-sm font-medium whitespace-nowrap pl-2">
+            Overview Date:
+          </label>
+          <Input 
+            type="date" 
+            value={selectedDate}
+            onChange={(e) => setSelectedDate(e.target.value)}
+            className="w-auto h-9"
+          />
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -258,7 +281,7 @@ export default function Dashboard() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
-              Today's Patients
+              {isToday ? "Today's Patients" : "Patients"}
             </CardTitle>
             <Calendar className="w-4 h-4 text-muted-foreground" />
           </CardHeader>
@@ -267,32 +290,90 @@ export default function Dashboard() {
               {patientsLoading ? <Skeleton className="h-8 w-16" /> : todayPatients.length}
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              {format(new Date(), "dd MMM yyyy")}
+              {format(new Date(selectedDate), "dd MMM yyyy")}
             </p>
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Today's Paid
-            </CardTitle>
-            <TrendingUp className="w-4 h-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-green-600" data-testid="text-today-paid">
-              {patientsLoading ? <Skeleton className="h-8 w-20" /> : `₹${todayPaidRevenue.toLocaleString()}`}
+        <Popover>
+          <PopoverTrigger asChild>
+            <Card className="cursor-pointer hover:shadow-md transition-shadow">
+              <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">
+                  {isToday ? "Today's Paid" : "Paid"}
+                </CardTitle>
+                <div className="flex items-center gap-1">
+                  <TrendingUp className="w-4 h-4 text-muted-foreground" />
+                  <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-green-600" data-testid="text-today-paid">
+                  {patientsLoading ? <Skeleton className="h-8 w-20" /> : `₹${todayPaidRevenue.toLocaleString()}`}
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Click to view payments
+                </p>
+              </CardContent>
+            </Card>
+          </PopoverTrigger>
+          <PopoverContent className="w-80 p-0 max-h-96 overflow-hidden" align="start">
+            <div className="p-3 border-b bg-muted/50">
+              <h4 className="font-semibold text-sm">
+                {isToday ? "Today's Payments" : "Payments"} ({todayPayments.length})
+              </h4>
+              <p className="text-xs text-muted-foreground">
+                Amounts received on {format(new Date(selectedDate), "dd MMM yyyy")}
+              </p>
             </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              Amount received today
-            </p>
-          </CardContent>
-        </Card>
+            <div className="max-h-72 overflow-y-auto">
+              {todayPayments.length === 0 ? (
+                <div className="p-4 text-center text-muted-foreground text-sm">
+                  No payments on this date
+                </div>
+              ) : (
+                todayPayments.map((payment) => {
+                  const bill = bills.find((b) => b.id === payment.billId);
+                  const patientName = bill ? bill.patientName : "Unknown";
+                  return (
+                    <div
+                      key={payment.id}
+                      className="flex items-center justify-between p-3 hover:bg-muted/50 cursor-pointer border-b last:border-b-0 transition-colors"
+                      onClick={() => {
+                        if (bill) setSelectedBillForDetails(bill);
+                      }}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center">
+                          <TrendingUp className="w-4 h-4 text-green-600" />
+                        </div>
+                        <div>
+                          <p className="font-medium text-sm">{patientName}</p>
+                          <p className="text-xs text-muted-foreground">
+                            Bill from {bill ? format(new Date(bill.date), "dd MMM yyyy") : ""}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <p className="font-semibold text-green-600 text-sm">
+                          ₹{payment.amount.toLocaleString()}
+                        </p>
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold mt-0.5">
+                          {payment.paymentMode}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </PopoverContent>
+        </Popover>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
-              Today's Pending
+              {isToday ? "Today's Pending" : "Pending from Date"}
             </CardTitle>
             <AlertCircle className="w-4 h-4 text-muted-foreground" />
           </CardHeader>
@@ -301,7 +382,7 @@ export default function Dashboard() {
               {patientsLoading ? <Skeleton className="h-8 w-20" /> : `₹${todayPendingAmount.toLocaleString()}`}
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              Pending from today's bills
+              {isToday ? "Pending from today's bills" : `Pending from ${format(new Date(selectedDate), "dd MMM yyyy")} bills`}
             </p>
           </CardContent>
         </Card>
@@ -432,10 +513,10 @@ export default function Dashboard() {
           <CardHeader className="pb-4">
             <CardTitle className="text-lg font-medium flex items-center gap-2">
               <Calendar className="w-5 h-5 text-blue-600" />
-              Today's Patients ({todayPatients.length})
+              {isToday ? "Today's Patients" : "Patients on Date"} ({todayPatients.length})
             </CardTitle>
             <p className="text-sm text-muted-foreground mt-2">
-              Patients registered or visited today - {format(new Date(), "dd MMMM yyyy")}
+              Patients registered or visited on {format(new Date(selectedDate), "dd MMMM yyyy")}
             </p>
           </CardHeader>
           <CardContent>
@@ -444,15 +525,19 @@ export default function Dashboard() {
                 const patientTodayBills = bills.filter(
                   (b) =>
                     b.patientId === patient.id &&
-                    b.date === todayDate
+                    b.date === selectedDate
                 );
                 const patientTodayVisits = visits.filter(
                   (v) =>
                     v.patientId === patient.id &&
-                    v.date === todayDate
+                    v.date === selectedDate
                 );
                 const todayTotal = patientTodayBills.reduce((sum, b) => sum + b.grandTotal, 0);
-                const todayPaid = patientTodayBills.reduce((sum, b) => sum + b.amountPaid, 0);
+                
+                // Get payments made today for this patient
+                const patientTodayPayments = todayPayments.filter((p) => p.patientId === patient.id);
+                const todayPaid = patientTodayPayments.reduce((sum, p) => sum + p.amount, 0);
+                
                 const todayPending = patientTodayBills.reduce((sum, b) => sum + b.pendingAmount, 0);
 
                 return (

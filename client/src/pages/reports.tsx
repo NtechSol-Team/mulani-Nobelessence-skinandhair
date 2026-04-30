@@ -84,7 +84,12 @@ export default function Reports() {
   });
   const patients = extractPaginatedData<Patient>(patientsResponse);
 
-  const isLoading = billsLoading || medicinesLoading || expensesLoading || patientsLoading;
+  const { data: paymentLedgersResponse, isLoading: paymentLedgersLoading } = useQuery({
+    queryKey: ["/api/payment-ledgers"],
+  });
+  const paymentLedgers = Array.isArray(paymentLedgersResponse) ? paymentLedgersResponse : [];
+
+  const isLoading = billsLoading || medicinesLoading || expensesLoading || patientsLoading || paymentLedgersLoading;
 
   const today = new Date();
   const monthStart = startOfMonth(today);
@@ -144,6 +149,13 @@ export default function Reports() {
     0
   );
   const thisMonthExpenseTotal = thisMonthExpenses.reduce((sum, e) => sum + e.amount, 0);
+
+  // Payment Breakdown
+  const thisMonthPayments = paymentLedgers.filter((p) =>
+    isWithinInterval(new Date(p.date), { start: dateRangeStart, end: dateRangeEnd })
+  );
+  const cashPayments = thisMonthPayments.filter(p => p.paymentMode === "Cash").reduce((sum, p) => sum + p.amount, 0);
+  const onlinePayments = thisMonthPayments.filter(p => p.paymentMode === "Online").reduce((sum, p) => sum + p.amount, 0);
 
   // Medicine profit data filtered by selected date range
   const filteredMedicineProfitData = medicines.map((medicine) => {
@@ -368,9 +380,10 @@ export default function Reports() {
                 `₹${thisMonthRevenue.toLocaleString()}`
               )}
             </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              From {thisMonthBills.length} bills
-            </p>
+            <div className="text-xs text-muted-foreground mt-2 flex items-center justify-between">
+              <span>Cash: <span className="font-medium text-foreground">₹{cashPayments.toLocaleString()}</span></span>
+              <span>Online: <span className="font-medium text-foreground">₹{onlinePayments.toLocaleString()}</span></span>
+            </div>
           </CardContent>
         </Card>
 

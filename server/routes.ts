@@ -328,6 +328,17 @@ export async function registerRoutes(
       }
 
       const bill = await storage.createBillWithStockUpdate(validated, patient.name);
+
+      if (validated.amountPaid > 0) {
+        await storage.createPaymentLedgerEntry({
+          billId: bill.id,
+          patientId: bill.patientId,
+          amount: validated.amountPaid,
+          date: new Date().toISOString().split('T')[0],
+          paymentMode: validated.paymentMode || "Cash",
+        });
+      }
+
       res.status(201).json(bill);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -380,7 +391,7 @@ export async function registerRoutes(
 
   app.patch("/api/bills/:id/payment", async (req, res) => {
     try {
-      const { addAmount, setAmount } = req.body;
+      const { addAmount, setAmount, paymentMode } = req.body;
 
       // Validate incoming numeric values if present
       if (typeof addAmount !== "undefined" && typeof addAmount !== "number") {
@@ -397,6 +408,7 @@ export async function registerRoutes(
       }
 
       let newTotalPaid: number;
+      let amountAdded = 0;
 
       // If setAmount is provided, use it as the absolute paid total (allow correcting mistakes)
       if (typeof setAmount === "number") {
@@ -404,6 +416,7 @@ export async function registerRoutes(
           return res.status(400).json({ error: "setAmount must be between 0 and bill total" });
         }
         newTotalPaid = setAmount;
+        amountAdded = setAmount - currentBill.amountPaid;
       } else {
         // Otherwise use additive flow (existing behavior)
         const add = typeof addAmount === "number" ? addAmount : undefined;
@@ -411,6 +424,7 @@ export async function registerRoutes(
           return res.status(400).json({ error: "Invalid payment amount" });
         }
         newTotalPaid = currentBill.amountPaid + add;
+        amountAdded = add;
         if (newTotalPaid > currentBill.grandTotal) {
           return res.status(400).json({
             error: `Cannot exceed bill amount. Remaining: ₹${(currentBill.grandTotal - currentBill.amountPaid).toFixed(2)}`
@@ -422,6 +436,17 @@ export async function registerRoutes(
       if (!bill) {
         return res.status(404).json({ error: "Bill not found" });
       }
+
+      if (amountAdded > 0) {
+        await storage.createPaymentLedgerEntry({
+          billId: bill.id,
+          patientId: bill.patientId,
+          amount: amountAdded,
+          date: new Date().toISOString().split('T')[0],
+          paymentMode: paymentMode || "Cash",
+        });
+      }
+
       res.json(bill);
     } catch (error) {
       res.status(500).json({ error: "Failed to update payment" });
@@ -595,6 +620,17 @@ export async function registerRoutes(
       res.status(204).send();
     } catch (error) {
       res.status(500).json({ error: "Failed to delete appointment" });
+    }
+  });
+
+  // ==================== PAYMENT LEDGERS ====================
+
+  app.get("/api/payment-ledgers", async (req, res) => {
+    try {
+      const ledgers = await storage.getPaymentLedgers();
+      res.json(ledgers);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch payment ledgers" });
     }
   });
 

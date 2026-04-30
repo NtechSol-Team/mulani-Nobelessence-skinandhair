@@ -146,6 +146,7 @@ export const insertBillSchema = z.object({
   discount: z.number().default(0),
   finalAmount: z.number(),
   amountPaid: z.number().min(0),
+  paymentMode: z.enum(["Cash", "Online"]).default("Cash"),
 });
 
 export type InsertBill = z.infer<typeof insertBillSchema>;
@@ -235,3 +236,24 @@ export const insertAppointmentSchema = z.object({
 });
 
 export type InsertAppointment = z.infer<typeof insertAppointmentSchema>;
+
+// Payment Ledger Schema
+export interface PaymentLedger {
+  id: string;
+  billId: string;
+  patientId: string;
+  amount: number;
+  date: string;
+  paymentMode: "Cash" | "Online";
+}
+
+export const insertPaymentLedgerSchema = z.object({
+  billId: z.string().min(1, "Bill ID is required"),
+  patientId: z.string().min(1, "Patient ID is required"),
+  amount: z.number().min(0, "Amount must be positive"),
+  date: z.string(),
+  paymentMode: z.enum(["Cash", "Online"]).default("Cash"),
+});
+
+export type InsertPaymentLedger = z.infer<typeof insertPaymentLedgerSchema>;
+

@@ -66,6 +66,7 @@ export default function BillingManage() {
   const [paymentDialogAmount, setPaymentDialogAmount] = useState("");
   const [isEditingPaidAmount, setIsEditingPaidAmount] = useState(false);
   const [editedPaidAmount, setEditedPaidAmount] = useState("");
+  const [paymentMode, setPaymentMode] = useState<"Cash" | "Online">("Cash");
   const [billToDelete, setBillToDelete] = useState<Bill | null>(null);
   const [billToEdit, setBillToEdit] = useState<Bill | null>(null);
   const [isEditBillDialogOpen, setIsEditBillDialogOpen] = useState(false);
@@ -91,11 +92,12 @@ export default function BillingManage() {
   const treatments = extractPaginatedData<Treatment>(treatmentsResponse);
 
   const adjustPaymentMutation = useMutation({
-    mutationFn: async ({ billId, addAmount, setAmount }: { billId: string; addAmount?: number; setAmount?: number }) => {
+    mutationFn: async ({ billId, addAmount, setAmount, paymentMode }: { billId: string; addAmount?: number; setAmount?: number; paymentMode?: string }) => {
       // send whichever param is provided (setAmount takes precedence)
       const body: Record<string, any> = {};
       if (typeof setAmount === "number") body.setAmount = setAmount;
       else if (typeof addAmount === "number") body.addAmount = addAmount;
+      if (paymentMode) body.paymentMode = paymentMode;
       return await apiRequest("PATCH", `/api/bills/${billId}/payment`, body);
     },
     onSuccess: () => {
@@ -689,6 +691,7 @@ export default function BillingManage() {
                       setPaymentDialogAmount("");
                       setIsEditingPaidAmount(false);
                       setEditedPaidAmount("");
+                      setPaymentMode("Cash");
                       setIsPaymentDialogOpen(true);
                     }}
                     onEdit={openEditBillDialog}
@@ -738,6 +741,7 @@ export default function BillingManage() {
                       setPaymentDialogAmount("");
                       setIsEditingPaidAmount(false);
                       setEditedPaidAmount("");
+                      setPaymentMode("Cash");
                       setIsPaymentDialogOpen(true);
                     }}
                     onEdit={openEditBillDialog}
@@ -758,6 +762,7 @@ export default function BillingManage() {
           setIsEditingPaidAmount(false);
           setEditedPaidAmount("");
           setPaymentDialogAmount("");
+          setPaymentMode("Cash");
           setSelectedBillForPayment(null);
         }
       }}>
@@ -837,6 +842,19 @@ export default function BillingManage() {
                     </p>
                   </>
                 )}
+
+                <div className="mt-4">
+                  <label className="text-sm font-medium mb-2 block">Payment Mode</label>
+                  <Select value={paymentMode} onValueChange={(v) => setPaymentMode(v as "Cash" | "Online")}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select payment mode" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Cash">Cash</SelectItem>
+                      <SelectItem value="Online">Online</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
 
               {(paymentDialogAmount || isEditingPaidAmount) && (
@@ -894,6 +912,7 @@ export default function BillingManage() {
                       adjustPaymentMutation.mutate({
                         billId: selectedBillForPayment.id,
                         setAmount,
+                        paymentMode,
                       });
                     } else {
                       const addAmount = parseFloat(paymentDialogAmount) || 0;
@@ -916,6 +935,7 @@ export default function BillingManage() {
                       adjustPaymentMutation.mutate({
                         billId: selectedBillForPayment.id,
                         addAmount,
+                        paymentMode,
                       });
                     }
                   }}

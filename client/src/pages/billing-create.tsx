@@ -41,6 +41,7 @@ export default function BillingCreate() {
   const [selectedMedicines, setSelectedMedicines] = useState<BillMedicineItem[]>([]);
   const [discount, setDiscount] = useState("");
   const [amountPaid, setAmountPaid] = useState("");
+  const [paymentMode, setPaymentMode] = useState<"Cash" | "Online">("Cash");
 
   const { data: patientsResponse, isLoading: patientsLoading } = useQuery({
     queryKey: ["/api/patients"],
@@ -110,6 +111,7 @@ export default function BillingCreate() {
         discount: discountValue,
         finalAmount,
         amountPaid: paid,
+        paymentMode: paid > 0 ? paymentMode : undefined,
       });
     },
     onSuccess: () => {
@@ -140,6 +142,7 @@ export default function BillingCreate() {
     setDiscount("");
     setSearchQuery("");
     setBillDate(format(new Date(), "yyyy-MM-dd"));
+    setPaymentMode("Cash");
   };
 
   const addTreatment = (treatmentId: string) => {
@@ -550,6 +553,20 @@ export default function BillingCreate() {
                       data-testid="input-amount-paid"
                     />
                   </div>
+                  {paid > 0 && (
+                    <div>
+                      <label className="text-sm font-medium mb-2 block">Payment Mode</label>
+                      <Select value={paymentMode} onValueChange={(v) => setPaymentMode(v as "Cash" | "Online")}>
+                        <SelectTrigger className="max-w-xs">
+                          <SelectValue placeholder="Select payment mode" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="Cash">Cash</SelectItem>
+                          <SelectItem value="Online">Online</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
                   <div className="bg-muted/50 p-3 rounded-lg space-y-2">
                     <div className="flex justify-between text-sm">
                       <span className="text-muted-foreground">Amount Paid:</span>
