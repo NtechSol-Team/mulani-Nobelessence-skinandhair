@@ -102,6 +102,7 @@ export default function BillingManage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/bills"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/payment-ledgers"] });
       toast({
         title: "Payment Updated",
         description: "Payment has been recorded successfully.",
@@ -135,6 +136,12 @@ export default function BillingManage() {
 
       if (!billToEdit) throw new Error("Bill not found");
 
+      const billDiscountValue = billToEdit.discount || 0;
+      const billDiscountAmount = billToEdit.discountType === "Percentage"
+        ? (grandTotal * billDiscountValue) / 100
+        : billDiscountValue;
+      const finalAmount = Math.max(0, grandTotal - billDiscountAmount);
+
       return await apiRequest("PATCH", `/api/bills/${billId}`, {
         patientId: billToEdit.patientId,
         date: billToEdit.date,
@@ -144,7 +151,8 @@ export default function BillingManage() {
         medicineTotal,
         grandTotal,
         discount: billToEdit.discount,
-        finalAmount: billToEdit.discount > 0 ? grandTotal - (grandTotal * billToEdit.discount / 100) : grandTotal,
+        discountType: billToEdit.discountType || "Percentage",
+        finalAmount,
         amountPaid: billToEdit.amountPaid,
       });
     },
@@ -176,6 +184,7 @@ export default function BillingManage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/bills"] });
       queryClient.invalidateQueries({ queryKey: ["/api/medicines"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/payment-ledgers"] });
       toast({
         title: "Bill Deleted",
         description: "Bill has been removed successfully.",
@@ -361,10 +370,10 @@ export default function BillingManage() {
       <div class="container">
         <div class="header">
         <div class="logo">
-          <img src="/logo.png" alt="Clinic Care Logo" />
+          <img src="/logo.png" alt="Nobel Essence Logo" />
         </div>
-        <div class="clinic-name">CLINIC CARE</div>
-        <div class="clinic-tag">Professional Healthcare Management System</div>
+        <div class="clinic-name">Nobel Essence</div>
+        <div class="clinic-tag">Hair Transplant * Cosmetic-Aestaetic center</div>
         </div>
 
         <div class="bill-info">
@@ -435,7 +444,7 @@ export default function BillingManage() {
         </div>
         ${(bill.grandTotal - bill.finalAmount) > 0.01 ? `
         <div class="total-row">
-          <span>Total Discount:</span>
+          <span>Bill Discount ${bill.discountType === "Percentage" ? `(${bill.discount}%)` : "(Flat)"}:</span>
           <span>-₹${(bill.grandTotal - bill.finalAmount).toFixed(2)}</span>
         </div>
         ` : ""}
@@ -466,7 +475,7 @@ export default function BillingManage() {
         `}
 
         <div class="footer">
-        <p>Thank you for choosing Clinic Care</p>
+        <p>Thank you for choosing Nobel Essence</p>
         <p>For queries, please contact us during business hours</p>
         </div>
 
@@ -533,15 +542,15 @@ export default function BillingManage() {
       </div>
 
       <div className="bg-muted/50 p-3 rounded space-y-2">
-        {bill.discount > 0 && (
+        {bill.grandTotal - bill.finalAmount > 0.01 && (
           <div className="flex justify-between text-sm text-muted-foreground">
             <span>Subtotal:</span>
             <span>₹{bill.grandTotal.toFixed(2)}</span>
           </div>
         )}
-        {bill.discount > 0 && (
+        {bill.grandTotal - bill.finalAmount > 0.01 && (
           <div className="flex justify-between text-sm text-muted-foreground">
-            <span>Discount ({bill.discount}%):</span>
+            <span>Discount {bill.discountType === "Percentage" ? `(${bill.discount}%)` : "(Flat)"}:</span>
             <span>-₹{(bill.grandTotal - bill.finalAmount).toFixed(2)}</span>
           </div>
         )}

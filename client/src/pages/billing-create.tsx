@@ -40,6 +40,7 @@ export default function BillingCreate() {
   const [selectedTreatments, setSelectedTreatments] = useState<BillTreatmentItem[]>([]);
   const [selectedMedicines, setSelectedMedicines] = useState<BillMedicineItem[]>([]);
   const [discount, setDiscount] = useState("");
+  const [discountType, setDiscountType] = useState<"Percentage" | "INR">("Percentage");
   const [amountPaid, setAmountPaid] = useState("");
   const [paymentMode, setPaymentMode] = useState<"Cash" | "Online">("Cash");
 
@@ -90,12 +91,13 @@ export default function BillingCreate() {
 
       const treatmentTotal = selectedTreatments.reduce((sum, t) => sum + t.price, 0);
       const medicineNetTotal = selectedMedicines.reduce((sum, m) => sum + m.total, 0);
-      const medicineGrossTotal = selectedMedicines.reduce((sum, m) => sum + (m.unitPrice * m.quantity), 0);
-      const totalMedicineDiscount = selectedMedicines.reduce((sum, m) => sum + (m.discount || 0), 0);
 
-      const grandTotal = treatmentTotal + medicineGrossTotal; // Gross Total
-      const discountValue = totalMedicineDiscount; // Total Discount Amount
-      const finalAmount = treatmentTotal + medicineNetTotal; // Net Total
+      const grandTotal = treatmentTotal + medicineNetTotal; // Base Total before bill discount (₹2510)
+      const billDiscountValue = parseFloat(discount) || 0;
+      const billDiscountAmount = discountType === "Percentage"
+        ? (grandTotal * billDiscountValue) / 100
+        : billDiscountValue;
+      const finalAmount = Math.max(0, grandTotal - billDiscountAmount);
       const paid = parseFloat(amountPaid) || 0;
 
       return await apiRequest("POST", "/api/bills", {
@@ -104,11 +106,10 @@ export default function BillingCreate() {
         treatments: selectedTreatments,
         medicines: selectedMedicines,
         treatmentTotal,
-        medicineTotal: medicineNetTotal, // We store Net total in medicine_total column usually or Gross? 
-        // Existing schema says medicine_total. 
-        // Logic in Bills page shows "Medicine Total (Net)" so it expects net.
-        grandTotal, // Saving Gross here
-        discount: discountValue,
+        medicineTotal: medicineNetTotal,
+        grandTotal,
+        discount: billDiscountValue,
+        discountType,
         finalAmount,
         amountPaid: paid,
         paymentMode: paid > 0 ? paymentMode : undefined,
@@ -140,6 +141,7 @@ export default function BillingCreate() {
     setSelectedMedicines([]);
     setAmountPaid("");
     setDiscount("");
+    setDiscountType("Percentage");
     setSearchQuery("");
     setBillDate(format(new Date(), "yyyy-MM-dd"));
     setPaymentMode("Cash");
@@ -239,16 +241,14 @@ export default function BillingCreate() {
   const medicineTotal = selectedMedicines.reduce((sum, m) => sum + m.total, 0);
   const totalMedicineDiscount = selectedMedicines.reduce((sum, m) => sum + (m.discount || 0), 0);
 
-  // Grand total is the sum of net totals (because medicine.total is now net)
-  // If we want "Gross Total" before discount:
-  const medicineGrossTotal = selectedMedicines.reduce((sum, m) => sum + (m.unitPrice * m.quantity), 0);
-  const grossGrandTotal = treatmentTotal + medicineGrossTotal;
+  const grossGrandTotal = treatmentTotal + medicineTotal; // Gross Total of the bill (₹2510)
 
-  // Total discount is just medicine discount (user disabled bill-level discount)
-  const discountValue = totalMedicineDiscount;
+  const billDiscountValue = parseFloat(discount) || 0;
+  const billDiscountAmount = discountType === "Percentage"
+    ? (grossGrandTotal * billDiscountValue) / 100
+    : billDiscountValue;
 
-  // Final Amount
-  const finalAmount = treatmentTotal + medicineTotal; // Since medicineTotal is already net
+  const finalAmount = Math.max(0, grossGrandTotal - billDiscountAmount);
 
   const paid = parseFloat(amountPaid) || 0;
   const pendingAmount = Math.max(0, finalAmount - paid);
@@ -523,7 +523,7 @@ export default function BillingCreate() {
                 </div>
                 {totalMedicineDiscount > 0 && (
                   <div className="flex justify-between text-sm text-green-600">
-                    <span>Total Discount</span>
+                    <span>Medicine Level Discount</span>
                     <span>-₹{totalMedicineDiscount.toFixed(2)}</span>
                   </div>
                 )}
@@ -531,6 +531,42 @@ export default function BillingCreate() {
                   <span>Gross Total</span>
                   <span>₹{grossGrandTotal.toFixed(2)}</span>
                 </div>
+                
+                {/* Bill Discount Picker */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-muted/40 p-3 rounded-lg border border-dashed">
+                  <span className="text-sm font-semibold text-muted-foreground">Bill Discount</span>
+                  <div className="flex gap-2 items-center">
+                    <Select value={discountType} onValueChange={(v) => {
+                      setDiscountType(v as "Percentage" | "INR");
+                      setDiscount(""); // Reset discount value on type change
+                    }}>
+                      <SelectTrigger className="w-32 h-8 bg-background">
+                        <SelectValue placeholder="Type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Percentage">Percentage (%)</SelectItem>
+                        <SelectItem value="INR">INR (₹)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Input
+                      type="number"
+                      min="0"
+                      max={discountType === "Percentage" ? 100 : grossGrandTotal}
+                      placeholder={discountType === "Percentage" ? "Enter %" : "Enter amount"}
+                      value={discount}
+                      onChange={(e) => setDiscount(e.target.value)}
+                      className="w-32 h-8 bg-background"
+                    />
+                  </div>
+                </div>
+
+                {billDiscountAmount > 0 && (
+                  <div className="flex justify-between text-sm text-green-600 font-medium">
+                    <span>Applied Bill Discount {discountType === "Percentage" ? `(${discount}%)` : ""}</span>
+                    <span>-₹{billDiscountAmount.toFixed(2)}</span>
+                  </div>
+                )}
+
                 <div className="flex justify-between font-bold text-xl border-t pt-3 text-primary">
                   <span>Final Amount</span>
                   <span>₹{finalAmount.toFixed(2)}</span>

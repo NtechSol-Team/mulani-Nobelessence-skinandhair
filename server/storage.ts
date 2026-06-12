@@ -17,6 +17,14 @@ import {
   type InsertAppointment,
   type PaymentLedger,
   type InsertPaymentLedger,
+  type Lead,
+  type InsertLead,
+  type CRMInteraction,
+  type InsertCRMInteraction,
+  type CRMTask,
+  type InsertCRMTask,
+  type Department,
+  type InsertDepartment,
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 import { Pool } from "pg";
@@ -62,6 +70,13 @@ export interface IStorage {
   updateTreatment(id: string, treatment: InsertTreatment): Promise<Treatment | undefined>;
   deleteTreatment(id: string): Promise<boolean>;
 
+  // Departments
+  getDepartments(): Promise<Department[]>;
+  getDepartment(id: string): Promise<Department | undefined>;
+  createDepartment(department: InsertDepartment): Promise<Department>;
+  updateDepartment(id: string, department: InsertDepartment): Promise<Department | undefined>;
+  deleteDepartment(id: string): Promise<boolean>;
+
   // Bills
   getBills(): Promise<Bill[]>;
   getBill(id: string): Promise<Bill | undefined>;
@@ -91,6 +106,24 @@ export interface IStorage {
   getPaymentLedgers(): Promise<PaymentLedger[]>;
   createPaymentLedgerEntry(payment: InsertPaymentLedger): Promise<PaymentLedger>;
 
+  // CRM - Leads
+  getLeads(): Promise<Lead[]>;
+  getLead(id: string): Promise<Lead | undefined>;
+  createLead(lead: InsertLead): Promise<Lead>;
+  updateLead(id: string, lead: InsertLead): Promise<Lead | undefined>;
+  deleteLead(id: string): Promise<boolean>;
+
+  // CRM - Interactions
+  getInteractions(patientId?: string, leadId?: string): Promise<CRMInteraction[]>;
+  createInteraction(interaction: InsertCRMInteraction): Promise<CRMInteraction>;
+  updateInteraction(id: string, update: Partial<InsertCRMInteraction>): Promise<CRMInteraction | undefined>;
+
+  // CRM - Tasks
+  getCRMTasks(): Promise<CRMTask[]>;
+  createCRMTask(task: InsertCRMTask): Promise<CRMTask>;
+  updateCRMTaskStatus(id: string, status: "Pending" | "Completed"): Promise<CRMTask | undefined>;
+  deleteCRMTask(id: string): Promise<boolean>;
+
   // Users/Auth
   // Authentication removed
 }
@@ -102,6 +135,44 @@ type DbPatientRow = {
   name: string;
   phone: string;
   registration_date: string;
+  dob?: string;
+  status?: string;
+  source?: string;
+  department?: string;
+};
+
+type DbLeadRow = {
+  id: string | number;
+  name: string;
+  phone?: string;
+  status: string;
+  source: string;
+  notes: string;
+  created_at: string;
+  converted_patient_id?: string | number;
+};
+
+type DbCRMInteractionRow = {
+  id: string | number;
+  patient_id?: string | number;
+  lead_id?: string | number;
+  date: string;
+  type: string;
+  channel: string;
+  notes: string;
+  outcome: string;
+};
+
+type DbCRMTaskRow = {
+  id: string | number;
+  description: string;
+  patient_id?: string | number;
+  patient_name?: string;
+  lead_id?: string | number;
+  lead_name?: string;
+  due_date: string;
+  status: string;
+  priority: string;
 };
 
 type DbVisitRow = {
@@ -111,6 +182,8 @@ type DbVisitRow = {
   complaints: string;
   diagnosis: string;
   visit_number: number;
+  prescription?: string;
+  consumed_medicines?: any;
 };
 
 type DbMedicineRow = {
@@ -138,6 +211,7 @@ type DbBillRow = {
   medicine_total: number;
   grand_total: number;
   discount: number;
+  discount_type?: string;
   final_amount: number;
   amount_paid: number;
   pending_amount: number;
@@ -184,6 +258,7 @@ const createTableStatements = [
     complaints TEXT NOT NULL,
     diagnosis TEXT NOT NULL,
     visit_number INTEGER NOT NULL,
+    prescription TEXT DEFAULT '',
     created_at TIMESTAMPTZ DEFAULT NOW()
   )`,
   `CREATE INDEX IF NOT EXISTS visits_patient_idx ON visits(patient_id)`,
@@ -239,6 +314,39 @@ const createTableStatements = [
     payment_mode TEXT NOT NULL DEFAULT 'Cash'
   )`,
   `CREATE INDEX IF NOT EXISTS payment_ledger_date_idx ON payment_ledger(date)`,
+  `CREATE TABLE IF NOT EXISTS leads (
+    id UUID PRIMARY KEY,
+    name TEXT NOT NULL,
+    phone TEXT,
+    status TEXT NOT NULL DEFAULT 'New',
+    source TEXT NOT NULL DEFAULT 'Instagram',
+    notes TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    converted_patient_id UUID REFERENCES patients(id) ON DELETE SET NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS crm_interactions (
+    id UUID PRIMARY KEY,
+    patient_id UUID REFERENCES patients(id) ON DELETE CASCADE,
+    lead_id UUID REFERENCES leads(id) ON DELETE CASCADE,
+    date TEXT NOT NULL,
+    type TEXT NOT NULL,
+    channel TEXT NOT NULL,
+    notes TEXT NOT NULL,
+    outcome TEXT NOT NULL DEFAULT ''
+  )`,
+  `CREATE INDEX IF NOT EXISTS crm_interactions_patient_idx ON crm_interactions(patient_id)`,
+  `CREATE INDEX IF NOT EXISTS crm_interactions_lead_idx ON crm_interactions(lead_id)`,
+  `CREATE TABLE IF NOT EXISTS crm_tasks (
+    id UUID PRIMARY KEY,
+    description TEXT NOT NULL,
+    patient_id UUID REFERENCES patients(id) ON DELETE CASCADE,
+    lead_id UUID REFERENCES leads(id) ON DELETE CASCADE,
+    due_date TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'Pending',
+    priority TEXT NOT NULL DEFAULT 'Medium'
+  )`,
+  `CREATE INDEX IF NOT EXISTS crm_tasks_patient_idx ON crm_tasks(patient_id)`,
+  `CREATE INDEX IF NOT EXISTS crm_tasks_lead_idx ON crm_tasks(lead_id)`,
 ];
 
 async function ensureTables(): Promise<void> {
@@ -248,9 +356,33 @@ async function ensureTables(): Promise<void> {
   // Migration for new time column
   await pool.query("ALTER TABLE appointments ADD COLUMN IF NOT EXISTS time TEXT DEFAULT ''");
 
+  // Migration for Patient CRM fields
+  await pool.query("ALTER TABLE patients ADD COLUMN IF NOT EXISTS dob TEXT DEFAULT ''");
+  await pool.query("ALTER TABLE patients ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'Active'");
+  await pool.query("ALTER TABLE patients ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'Walk-in'");
+  await pool.query("ALTER TABLE patients ADD COLUMN IF NOT EXISTS department TEXT DEFAULT ''");
+
+  // Create departments table
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS departments (
+      id UUID PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE
+    )
+  `);
+
+  // Pre-seed departments table
+  const { rowCount: deptCount } = await pool.query("SELECT 1 FROM departments LIMIT 1");
+  if (!deptCount) {
+    await pool.query("INSERT INTO departments (id, name) VALUES ($1, 'Hair'), ($2, 'Skin')", [randomUUID(), randomUUID()]);
+  }
+
+  // Migration to make lead phone optional
+  await pool.query("ALTER TABLE leads ALTER COLUMN phone DROP NOT NULL");
+
   // Migration for discount fields
   await pool.query("ALTER TABLE bills ADD COLUMN IF NOT EXISTS discount DOUBLE PRECISION DEFAULT 0");
   await pool.query("ALTER TABLE bills ADD COLUMN IF NOT EXISTS final_amount DOUBLE PRECISION DEFAULT 0");
+  await pool.query("ALTER TABLE bills ADD COLUMN IF NOT EXISTS discount_type TEXT DEFAULT 'Percentage'");
 
   // Backfill final_amount for existing records if it's 0 but grand_total is not (optional but good for consistency)
   // We can assume if final_amount is 0 and discount is 0, final_amount should match grand_total.
@@ -258,6 +390,12 @@ async function ensureTables(): Promise<void> {
 
   // Migration for payment_mode
   await pool.query("ALTER TABLE payment_ledger ADD COLUMN IF NOT EXISTS payment_mode TEXT NOT NULL DEFAULT 'Cash'");
+
+  // Migration for prescription column in visits
+  await pool.query("ALTER TABLE visits ADD COLUMN IF NOT EXISTS prescription TEXT DEFAULT ''");
+
+  // Migration for consumed_medicines column in visits
+  await pool.query("ALTER TABLE visits ADD COLUMN IF NOT EXISTS consumed_medicines JSONB DEFAULT '[]'::jsonb");
 
   // Backfill payment_ledger
   const { rowCount } = await pool.query("SELECT 1 FROM payment_ledger LIMIT 1");
@@ -306,7 +444,7 @@ class DataCache {
   }
 }
 
-type EntityTable = "patients" | "visits" | "medicines" | "treatments" | "bills" | "expenses" | "appointments" | "payment_ledger";
+type EntityTable = "patients" | "visits" | "medicines" | "treatments" | "bills" | "expenses" | "appointments" | "payment_ledger" | "leads" | "crm_interactions" | "crm_tasks" | "departments";
 type IdMode = "numeric" | "text";
 
 async function getColumnDataType(table: string, column: string): Promise<string | undefined> {
@@ -320,7 +458,7 @@ async function getColumnDataType(table: string, column: string): Promise<string 
 }
 
 async function detectIdModes(): Promise<Record<EntityTable, IdMode>> {
-  const tables: EntityTable[] = ["patients", "visits", "medicines", "treatments", "bills", "expenses", "appointments", "payment_ledger"];
+  const tables: EntityTable[] = ["patients", "visits", "medicines", "treatments", "bills", "expenses", "appointments", "payment_ledger", "leads", "crm_interactions", "crm_tasks", "departments"];
   const entries = await Promise.all(
     tables.map(async (table) => {
       const dataType = await getColumnDataType(table, "id");
@@ -340,16 +478,66 @@ const mapPatient = (row: DbPatientRow): Patient => ({
   name: row.name,
   phone: row.phone,
   registrationDate: row.registration_date,
+  dob: row.dob || "",
+  status: (row.status || "Active") as "Active" | "Inactive" | "VIP",
+  source: row.source || "Walk-in",
+  department: row.department || "",
 });
 
-const mapVisit = (row: DbVisitRow): Visit => ({
+const mapLead = (row: DbLeadRow): Lead => ({
   id: normalizeId(row.id),
-  patientId: normalizeId(row.patient_id),
-  date: row.date,
-  complaints: row.complaints,
-  diagnosis: row.diagnosis,
-  visitNumber: row.visit_number,
+  name: row.name,
+  phone: row.phone,
+  status: (row.status || "New") as any,
+  source: row.source || "Instagram",
+  notes: row.notes || "",
+  createdAt: row.created_at,
+  convertedPatientId: row.converted_patient_id ? normalizeId(row.converted_patient_id) : undefined,
 });
+
+const mapCRMInteraction = (row: DbCRMInteractionRow): CRMInteraction => ({
+  id: normalizeId(row.id),
+  patientId: row.patient_id ? normalizeId(row.patient_id) : undefined,
+  leadId: row.lead_id ? normalizeId(row.lead_id) : undefined,
+  date: row.date,
+  type: (row.type || "Inquiry") as any,
+  channel: (row.channel || "Call") as any,
+  notes: row.notes || "",
+  outcome: row.outcome || "",
+});
+
+const mapCRMTask = (row: DbCRMTaskRow): CRMTask => ({
+  id: normalizeId(row.id),
+  description: row.description,
+  patientId: row.patient_id ? normalizeId(row.patient_id) : undefined,
+  patientName: row.patient_name,
+  leadId: row.lead_id ? normalizeId(row.lead_id) : undefined,
+  leadName: row.lead_name,
+  dueDate: row.due_date,
+  status: (row.status || "Pending") as any,
+  priority: (row.priority || "Medium") as any,
+});
+
+const mapVisit = (row: DbVisitRow): Visit => {
+  let consumedMedicines = row.consumed_medicines ?? [];
+  if (typeof consumedMedicines === "string") {
+    try {
+      consumedMedicines = JSON.parse(consumedMedicines);
+    } catch (e) {
+      consumedMedicines = [];
+    }
+  }
+  return {
+    id: normalizeId(row.id),
+    patientId: normalizeId(row.patient_id),
+    date: row.date,
+    complaints: row.complaints,
+    diagnosis: row.diagnosis,
+    visitNumber: row.visit_number,
+    prescription: row.prescription || "",
+    consumedMedicines: consumedMedicines as any[],
+  };
+};
 
 const mapMedicine = (row: DbMedicineRow): Medicine => ({
   id: normalizeId(row.id),
@@ -402,6 +590,7 @@ const mapBill = (row: DbBillRow): Bill => {
     medicineTotal: row.medicine_total,
     grandTotal: row.grand_total,
     discount: row.discount || 0,
+    discountType: (row.discount_type || "Percentage") as "Percentage" | "INR",
     finalAmount: finalAmount,
     amountPaid: row.amount_paid,
     pendingAmount: row.pending_amount,
@@ -447,6 +636,10 @@ export class PostgresStorage implements IStorage {
     expenses: "text",
     appointments: "text",
     payment_ledger: "text",
+    leads: "text",
+    crm_interactions: "text",
+    crm_tasks: "text",
+    departments: "text",
   };
   private cache = new DataCache(5_000);
 
@@ -462,7 +655,32 @@ export class PostgresStorage implements IStorage {
   }
 
   private usesNumericId(table: EntityTable): boolean {
-    return this.idModes[table] === "numeric";
+    switch (table) {
+      case "patients":
+        return this.idModes.patients === "numeric";
+      case "visits":
+        return this.idModes.visits === "numeric";
+      case "medicines":
+        return this.idModes.medicines === "numeric";
+      case "treatments":
+        return this.idModes.treatments === "numeric";
+      case "bills":
+        return this.idModes.bills === "numeric";
+      case "expenses":
+        return this.idModes.expenses === "numeric";
+      case "appointments":
+        return this.idModes.appointments === "numeric";
+      case "payment_ledger":
+        return this.idModes.payment_ledger === "numeric";
+      case "leads":
+        return this.idModes.leads === "numeric";
+      case "crm_interactions":
+        return this.idModes.crm_interactions === "numeric";
+      case "crm_tasks":
+        return this.idModes.crm_tasks === "numeric";
+      default:
+        return false;
+    }
   }
 
   private convertId(table: EntityTable, id: string): string | number {
@@ -484,7 +702,7 @@ export class PostgresStorage implements IStorage {
       return cached;
     }
     const { rows } = await pool.query<DbPatientRow>(
-      "SELECT id, name, phone, registration_date FROM patients ORDER BY registration_date DESC"
+      "SELECT id, name, phone, registration_date, dob, status, source, department FROM patients ORDER BY registration_date DESC"
     );
     const patients = rows.map(mapPatient);
     this.cache.set("patients", patients);
@@ -501,7 +719,7 @@ export class PostgresStorage implements IStorage {
     }
     const dbId = this.convertId("patients", id);
     const { rows } = await pool.query<DbPatientRow>(
-      "SELECT id, name, phone, registration_date FROM patients WHERE id = $1",
+      "SELECT id, name, phone, registration_date, dob, status, source, department FROM patients WHERE id = $1",
       [dbId]
     );
     const patient = rows[0] ? mapPatient(rows[0]) : undefined;
@@ -515,15 +733,15 @@ export class PostgresStorage implements IStorage {
     await this.waitForReady();
     const useNumericId = this.usesNumericId("patients");
     const query = useNumericId
-      ? `INSERT INTO patients (name, phone, registration_date)
-         VALUES ($1, $2, $3)
-         RETURNING id, name, phone, registration_date`
-      : `INSERT INTO patients (id, name, phone, registration_date)
-         VALUES ($1, $2, $3, $4)
-         RETURNING id, name, phone, registration_date`;
+      ? `INSERT INTO patients (name, phone, registration_date, dob, status, source, department)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING id, name, phone, registration_date, dob, status, source, department`
+      : `INSERT INTO patients (id, name, phone, registration_date, dob, status, source, department)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING id, name, phone, registration_date, dob, status, source, department`;
     const params = useNumericId
-      ? [insertPatient.name, insertPatient.phone, insertPatient.registrationDate]
-      : [randomUUID(), insertPatient.name, insertPatient.phone, insertPatient.registrationDate];
+      ? [insertPatient.name, insertPatient.phone, insertPatient.registrationDate, insertPatient.dob || '', insertPatient.status || 'Active', insertPatient.source || 'Walk-in', insertPatient.department || '']
+      : [randomUUID(), insertPatient.name, insertPatient.phone, insertPatient.registrationDate, insertPatient.dob || '', insertPatient.status || 'Active', insertPatient.source || 'Walk-in', insertPatient.department || ''];
     const { rows } = await pool.query<DbPatientRow>(query, params);
     const patient = mapPatient(rows[0]);
     this.cache.invalidate("patients");
@@ -535,10 +753,10 @@ export class PostgresStorage implements IStorage {
     await this.waitForReady();
     const { rows } = await pool.query<DbPatientRow>(
       `UPDATE patients
-       SET name = $1, phone = $2, registration_date = $3
-       WHERE id = $4
-       RETURNING id, name, phone, registration_date`,
-      [insertPatient.name, insertPatient.phone, insertPatient.registrationDate, id]
+       SET name = $1, phone = $2, registration_date = $3, dob = $4, status = $5, source = $6, department = $7
+       WHERE id = $8
+       RETURNING id, name, phone, registration_date, dob, status, source, department`,
+      [insertPatient.name, insertPatient.phone, insertPatient.registrationDate, insertPatient.dob || '', insertPatient.status || 'Active', insertPatient.source || 'Walk-in', insertPatient.department || '', id]
     );
     const patient = rows[0] ? mapPatient(rows[0]) : undefined;
     if (patient) {
@@ -572,6 +790,25 @@ export class PostgresStorage implements IStorage {
       }
     }
 
+    // 2.5 Restore stock for consumed medicines in visits
+    const { rows: patientVisits } = await pool.query<DbVisitRow>(
+      "SELECT * FROM visits WHERE patient_id = $1",
+      [dbId]
+    );
+    for (const row of patientVisits) {
+      const visit = mapVisit(row);
+      const consumed = visit.consumedMedicines || [];
+      for (const item of consumed) {
+        if (item.medicineId && item.quantity > 0) {
+          try {
+            await this.updateMedicineStock(item.medicineId, item.quantity);
+          } catch (e) {
+            console.error(`Failed to restore stock for consumed medicine ${item.medicineId} in visit ${visit.id}`, e);
+          }
+        }
+      }
+    }
+
     // 3. Delete patient (Cascade will delete bills and visits)
     const result = await pool.query("DELETE FROM patients WHERE id = $1", [dbId]);
     const success = (result.rowCount ?? 0) > 0;
@@ -595,7 +832,7 @@ export class PostgresStorage implements IStorage {
       return cached;
     }
     const { rows } = await pool.query<DbVisitRow>(
-      "SELECT id, patient_id, date, complaints, diagnosis, visit_number FROM visits ORDER BY date DESC, visit_number DESC"
+      "SELECT id, patient_id, date, complaints, diagnosis, visit_number, prescription, consumed_medicines FROM visits ORDER BY date DESC, visit_number DESC"
     );
     const visits = rows.map(mapVisit);
     this.cache.set("visits:all", visits);
@@ -605,14 +842,14 @@ export class PostgresStorage implements IStorage {
   async getVisitsByPatient(patientId: string): Promise<Visit[]> {
     await this.waitForReady();
     const normalizedPatientId = normalizeId(patientId);
-    const cacheKey = `visits: patient: ${normalizedPatientId}`;
+    const cacheKey = `visits:patient:${normalizedPatientId}`;
     const cached = this.cache.get<Visit[]>(cacheKey);
     if (cached) {
       return cached;
     }
     const dbPatientId = this.convertId("patients", patientId);
     const { rows } = await pool.query<DbVisitRow>(
-      "SELECT id, patient_id, date, complaints, diagnosis, visit_number FROM visits WHERE patient_id = $1 ORDER BY visit_number DESC",
+      "SELECT id, patient_id, date, complaints, diagnosis, visit_number, prescription, consumed_medicines FROM visits WHERE patient_id = $1 ORDER BY visit_number DESC",
       [dbPatientId]
     );
     const visits = rows.map(mapVisit);
@@ -622,61 +859,141 @@ export class PostgresStorage implements IStorage {
 
   async createVisit(insertVisit: InsertVisit): Promise<Visit> {
     await this.waitForReady();
-    const patientIdValue = this.convertId("patients", insertVisit.patientId);
-    const [{ visit_number }] = (
-      await pool.query<{ visit_number: number }>(
-        `SELECT COALESCE(MAX(visit_number), 0) + 1 AS visit_number
-         FROM visits
-         WHERE patient_id = $1`,
-        [patientIdValue]
-      )
-    ).rows;
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
 
-    const visitNumber = Number(visit_number ?? 1);
-    const usesNumericVisitId = this.usesNumericId("visits");
-    const insertQuery = usesNumericVisitId
-      ? `INSERT INTO visits(patient_id, date, complaints, diagnosis, visit_number)
-         VALUES($1, $2, $3, $4, $5)
-         RETURNING id, patient_id, date, complaints, diagnosis, visit_number`
-      : `INSERT INTO visits(id, patient_id, date, complaints, diagnosis, visit_number)
-         VALUES($1, $2, $3, $4, $5, $6)
-         RETURNING id, patient_id, date, complaints, diagnosis, visit_number`;
-    const insertParams = usesNumericVisitId
-      ? [patientIdValue, insertVisit.date, insertVisit.complaints, insertVisit.diagnosis, visitNumber]
-      : [
-        randomUUID(),
-        patientIdValue,
-        insertVisit.date,
-        insertVisit.complaints,
-        insertVisit.diagnosis,
-        visitNumber,
-      ];
-    const { rows } = await pool.query<DbVisitRow>(insertQuery, insertParams);
-    const visit = mapVisit(rows[0]);
-    this.cache.invalidate("visits");
-    this.cache.invalidate(`visits: patient: ${normalizeId(insertVisit.patientId)
-      } `);
-    return visit;
+      // 1. Deduct stock for consumed medicines
+      const consumedMedicines = insertVisit.consumedMedicines || [];
+      for (const item of consumedMedicines) {
+        if (item.medicineId) {
+          const dbMedId = this.convertId("medicines", item.medicineId);
+          await client.query(
+            "UPDATE medicines SET quantity = GREATEST(0, quantity - $2) WHERE id = $1",
+            [dbMedId, item.quantity]
+          );
+        }
+      }
+
+      // 2. Get visit number
+      const patientIdValue = this.convertId("patients", insertVisit.patientId);
+      const [{ visit_number }] = (
+        await client.query<{ visit_number: number }>(
+          `SELECT COALESCE(MAX(visit_number), 0) + 1 AS visit_number
+           FROM visits
+           WHERE patient_id = $1`,
+          [patientIdValue]
+        )
+      ).rows;
+
+      const visitNumber = Number(visit_number ?? 1);
+      const usesNumericVisitId = this.usesNumericId("visits");
+      const insertQuery = usesNumericVisitId
+        ? `INSERT INTO visits(patient_id, date, complaints, diagnosis, visit_number, prescription, consumed_medicines)
+           VALUES($1, $2, $3, $4, $5, $6, $7)
+           RETURNING id, patient_id, date, complaints, diagnosis, visit_number, prescription, consumed_medicines`
+        : `INSERT INTO visits(id, patient_id, date, complaints, diagnosis, visit_number, prescription, consumed_medicines)
+           VALUES($1, $2, $3, $4, $5, $6, $7, $8)
+           RETURNING id, patient_id, date, complaints, diagnosis, visit_number, prescription, consumed_medicines`;
+      const insertParams = usesNumericVisitId
+        ? [patientIdValue, insertVisit.date, insertVisit.complaints, insertVisit.diagnosis, visitNumber, insertVisit.prescription || "", JSON.stringify(consumedMedicines)]
+        : [
+          randomUUID(),
+          patientIdValue,
+          insertVisit.date,
+          insertVisit.complaints,
+          insertVisit.diagnosis,
+          visitNumber,
+          insertVisit.prescription || "",
+          JSON.stringify(consumedMedicines),
+        ];
+
+      const { rows } = await client.query<DbVisitRow>(insertQuery, insertParams);
+      await client.query("COMMIT");
+
+      const visit = mapVisit(rows[0]);
+      this.cache.invalidate("visits");
+      this.cache.invalidate(`visits:patient:${normalizeId(insertVisit.patientId)}`);
+      this.cache.invalidate("medicines"); // because stock changed
+      return visit;
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
   }
 
   async updateVisit(id: string, insertVisit: InsertVisit): Promise<Visit | undefined> {
     await this.waitForReady();
     const dbVisitId = this.convertId("visits", id);
-    const { rows } = await pool.query<DbVisitRow>(
-      `UPDATE visits
-       SET date = $2,
-            complaints = $3,
-            diagnosis = $4
-       WHERE id = $1
-       RETURNING id, patient_id, date, complaints, diagnosis, visit_number`,
-      [dbVisitId, insertVisit.date, insertVisit.complaints, insertVisit.diagnosis]
-    );
-    const visit = rows[0] ? mapVisit(rows[0]) : undefined;
-    if (visit) {
-      this.cache.invalidate("visits");
-      this.cache.invalidate(`visits: patient:${visit.patientId} `);
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      // 1. Get old visit to see what was previously consumed
+      const { rows: oldRows } = await client.query<DbVisitRow>(
+        "SELECT * FROM visits WHERE id = $1 FOR UPDATE",
+        [dbVisitId]
+      );
+      const oldVisitRow = oldRows[0];
+      if (!oldVisitRow) {
+        await client.query("ROLLBACK");
+        return undefined;
+      }
+      const oldVisit = mapVisit(oldVisitRow);
+      const oldConsumed = oldVisit.consumedMedicines || [];
+
+      // 2. Restore old stock
+      for (const item of oldConsumed) {
+        if (item.medicineId) {
+          const dbMedId = this.convertId("medicines", item.medicineId);
+          await client.query(
+            "UPDATE medicines SET quantity = quantity + $2 WHERE id = $1",
+            [dbMedId, item.quantity]
+          );
+        }
+      }
+
+      // 3. Deduct new stock
+      const newConsumed = insertVisit.consumedMedicines || [];
+      for (const item of newConsumed) {
+        if (item.medicineId) {
+          const dbMedId = this.convertId("medicines", item.medicineId);
+          await client.query(
+            "UPDATE medicines SET quantity = GREATEST(0, quantity - $2) WHERE id = $1",
+            [dbMedId, item.quantity]
+          );
+        }
+      }
+
+      // 4. Update the visit row
+      const { rows } = await client.query<DbVisitRow>(
+        `UPDATE visits
+         SET date = $2,
+              complaints = $3,
+              diagnosis = $4,
+              prescription = $5,
+              consumed_medicines = $6
+         WHERE id = $1
+         RETURNING id, patient_id, date, complaints, diagnosis, visit_number, prescription, consumed_medicines`,
+        [dbVisitId, insertVisit.date, insertVisit.complaints, insertVisit.diagnosis, insertVisit.prescription || "", JSON.stringify(newConsumed)]
+      );
+      await client.query("COMMIT");
+
+      const visit = rows[0] ? mapVisit(rows[0]) : undefined;
+      if (visit) {
+        this.cache.invalidate("visits");
+        this.cache.invalidate(`visits:patient:${visit.patientId}`);
+        this.cache.invalidate("medicines"); // because stock changed
+      }
+      return visit;
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
     }
-    return visit;
   }
 
   // Medicines
@@ -877,6 +1194,68 @@ export class PostgresStorage implements IStorage {
     return success;
   }
 
+  // Departments
+  async getDepartments(): Promise<Department[]> {
+    await this.waitForReady();
+    const cached = this.cache.get<Department[]>("departments");
+    if (cached) {
+      return cached;
+    }
+    const { rows } = await pool.query<{ id: string; name: string }>(
+      "SELECT id, name FROM departments ORDER BY name ASC"
+    );
+    const departments = rows.map(r => ({ id: normalizeId(r.id), name: r.name }));
+    this.cache.set("departments", departments);
+    return departments;
+  }
+
+  async getDepartment(id: string): Promise<Department | undefined> {
+    await this.waitForReady();
+    const dbId = this.convertId("departments", id);
+    const { rows } = await pool.query<{ id: string; name: string }>(
+      "SELECT id, name FROM departments WHERE id = $1",
+      [dbId]
+    );
+    return rows[0] ? { id: normalizeId(rows[0].id), name: rows[0].name } : undefined;
+  }
+
+  async createDepartment(insert: InsertDepartment): Promise<Department> {
+    await this.waitForReady();
+    const id = randomUUID();
+    const { rows } = await pool.query<{ id: string; name: string }>(
+      "INSERT INTO departments (id, name) VALUES ($1, $2) RETURNING id, name",
+      [id, insert.name]
+    );
+    const dept = { id: normalizeId(rows[0].id), name: rows[0].name };
+    this.cache.invalidate("departments");
+    return dept;
+  }
+
+  async updateDepartment(id: string, insert: InsertDepartment): Promise<Department | undefined> {
+    await this.waitForReady();
+    const dbId = this.convertId("departments", id);
+    const { rows } = await pool.query<{ id: string; name: string }>(
+      "UPDATE departments SET name = $1 WHERE id = $2 RETURNING id, name",
+      [insert.name, dbId]
+    );
+    const dept = rows[0] ? { id: normalizeId(rows[0].id), name: rows[0].name } : undefined;
+    if (dept) {
+      this.cache.invalidate("departments");
+    }
+    return dept;
+  }
+
+  async deleteDepartment(id: string): Promise<boolean> {
+    await this.waitForReady();
+    const dbId = this.convertId("departments", id);
+    const result = await pool.query("DELETE FROM departments WHERE id = $1", [dbId]);
+    const success = (result.rowCount ?? 0) > 0;
+    if (success) {
+      this.cache.invalidate("departments");
+    }
+    return success;
+  }
+
   // Bills
   async getBills(): Promise<Bill[]> {
     await this.waitForReady();
@@ -935,13 +1314,14 @@ export class PostgresStorage implements IStorage {
               medicine_total,
               grand_total,
               discount,
+              discount_type,
               final_amount,
               amount_paid,
               pending_amount
             )
-          VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+          VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         RETURNING id, patient_id, patient_name, date, treatments, medicines,
-            treatment_total, medicine_total, grand_total, discount, final_amount, amount_paid, pending_amount`
+            treatment_total, medicine_total, grand_total, discount, discount_type, final_amount, amount_paid, pending_amount`
         : `INSERT INTO bills(
               id,
               patient_id,
@@ -953,13 +1333,14 @@ export class PostgresStorage implements IStorage {
               medicine_total,
               grand_total,
               discount,
+              discount_type,
               final_amount,
               amount_paid,
               pending_amount
             )
-          VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+          VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         RETURNING id, patient_id, patient_name, date, treatments, medicines,
-            treatment_total, medicine_total, grand_total, discount, final_amount, amount_paid, pending_amount`;
+            treatment_total, medicine_total, grand_total, discount, discount_type, final_amount, amount_paid, pending_amount`;
       const params = useNumericId
         ? [
           patientIdValue,
@@ -971,6 +1352,7 @@ export class PostgresStorage implements IStorage {
           insertBill.medicineTotal,
           insertBill.grandTotal,
           insertBill.discount,
+          insertBill.discountType || "Percentage",
           insertBill.finalAmount,
           insertBill.amountPaid,
           pendingAmount,
@@ -986,6 +1368,7 @@ export class PostgresStorage implements IStorage {
           insertBill.medicineTotal,
           insertBill.grandTotal,
           insertBill.discount,
+          insertBill.discountType || "Percentage",
           insertBill.finalAmount,
           insertBill.amountPaid,
           pendingAmount,
@@ -1058,13 +1441,14 @@ export class PostgresStorage implements IStorage {
               medicine_total,
               grand_total,
               discount,
+              discount_type,
               final_amount,
               amount_paid,
               pending_amount
             )
-          VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+          VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         RETURNING id, patient_id, patient_name, date, treatments, medicines,
-            treatment_total, medicine_total, grand_total, discount, final_amount, amount_paid, pending_amount`
+            treatment_total, medicine_total, grand_total, discount, discount_type, final_amount, amount_paid, pending_amount`
         : `INSERT INTO bills(
               id,
               patient_id,
@@ -1076,13 +1460,14 @@ export class PostgresStorage implements IStorage {
               medicine_total,
               grand_total,
               discount,
+              discount_type,
               final_amount,
               amount_paid,
               pending_amount
             )
-          VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+          VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         RETURNING id, patient_id, patient_name, date, treatments, medicines,
-            treatment_total, medicine_total, grand_total, discount, final_amount, amount_paid, pending_amount`;
+            treatment_total, medicine_total, grand_total, discount, discount_type, final_amount, amount_paid, pending_amount`;
 
       const params = useNumericId
         ? [
@@ -1095,6 +1480,7 @@ export class PostgresStorage implements IStorage {
           insertBill.medicineTotal,
           insertBill.grandTotal,
           insertBill.discount,
+          insertBill.discountType || "Percentage",
           insertBill.finalAmount,
           insertBill.amountPaid,
           pendingAmount,
@@ -1110,6 +1496,7 @@ export class PostgresStorage implements IStorage {
           insertBill.medicineTotal,
           insertBill.grandTotal,
           insertBill.discount,
+          insertBill.discountType || "Percentage",
           insertBill.finalAmount,
           insertBill.amountPaid,
           pendingAmount,
@@ -1156,12 +1543,13 @@ export class PostgresStorage implements IStorage {
             medicine_total = $8,
             grand_total = $9,
             discount = $10,
+            discount_type = $14,
             final_amount = $11,
             amount_paid = $12,
             pending_amount = $13
        WHERE id = $1
        RETURNING id, patient_id, patient_name, date, treatments, medicines,
-            treatment_total, medicine_total, grand_total, discount, final_amount, amount_paid, pending_amount`,
+            treatment_total, medicine_total, grand_total, discount, discount_type, final_amount, amount_paid, pending_amount`,
       [
         dbId,
         this.convertId("patients", insertBill.patientId),
@@ -1176,6 +1564,7 @@ export class PostgresStorage implements IStorage {
         insertBill.finalAmount,
         insertBill.amountPaid,
         pendingAmount,
+        insertBill.discountType || "Percentage",
       ]
     );
     const bill = rows[0] ? mapBill(rows[0]) : undefined;
@@ -1336,7 +1725,7 @@ export class PostgresStorage implements IStorage {
     const total = parseInt(countResult[0]?.count || "0", 10);
 
     const { rows } = await pool.query<DbPatientRow>(
-      `SELECT id, name, phone, registration_date FROM patients 
+      `SELECT id, name, phone, registration_date, dob, status, source, department FROM patients 
        ORDER BY registration_date DESC 
        LIMIT $1 OFFSET $2`,
       [limit, offset]
@@ -1612,6 +2001,229 @@ export class PostgresStorage implements IStorage {
 
     this.cache.invalidate("payment_ledgers");
     return ledger;
+  }
+
+  // CRM - Leads
+  async getLeads(): Promise<Lead[]> {
+    await this.waitForReady();
+    const cached = this.cache.get<Lead[]>("crm:leads");
+    if (cached) return cached;
+    const { rows } = await pool.query<DbLeadRow>(
+      "SELECT id, name, phone, status, source, notes, created_at, converted_patient_id FROM leads ORDER BY created_at DESC"
+    );
+    const leads = rows.map(mapLead);
+    this.cache.set("crm:leads", leads);
+    return leads;
+  }
+
+  async getLead(id: string): Promise<Lead | undefined> {
+    await this.waitForReady();
+    const dbId = this.convertId("leads", id);
+    const { rows } = await pool.query<DbLeadRow>(
+      "SELECT id, name, phone, status, source, notes, created_at, converted_patient_id FROM leads WHERE id = $1",
+      [dbId]
+    );
+    return rows[0] ? mapLead(rows[0]) : undefined;
+  }
+
+  async createLead(insert: InsertLead): Promise<Lead> {
+    await this.waitForReady();
+    const useNumericId = this.usesNumericId("leads");
+    const query = useNumericId
+      ? `INSERT INTO leads(name, phone, status, source, notes, created_at, converted_patient_id)
+         VALUES($1, $2, $3, $4, $5, $6, $7)
+         RETURNING id, name, phone, status, source, notes, created_at, converted_patient_id`
+      : `INSERT INTO leads(id, name, phone, status, source, notes, created_at, converted_patient_id)
+         VALUES($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING id, name, phone, status, source, notes, created_at, converted_patient_id`;
+
+    const dbPatientId = insert.convertedPatientId ? this.convertId("patients", insert.convertedPatientId) : null;
+    const params = useNumericId
+      ? [insert.name, insert.phone, insert.status, insert.source, insert.notes, insert.createdAt, dbPatientId]
+      : [randomUUID(), insert.name, insert.phone, insert.status, insert.source, insert.notes, insert.createdAt, dbPatientId];
+
+    const { rows } = await pool.query<DbLeadRow>(query, params);
+    const lead = mapLead(rows[0]);
+    this.cache.invalidate("crm:leads");
+    return lead;
+  }
+
+  async updateLead(id: string, insert: InsertLead): Promise<Lead | undefined> {
+    await this.waitForReady();
+    const dbId = this.convertId("leads", id);
+    const dbPatientId = insert.convertedPatientId ? this.convertId("patients", insert.convertedPatientId) : null;
+    const { rows } = await pool.query<DbLeadRow>(
+      `UPDATE leads
+       SET name = $2, phone = $3, status = $4, source = $5, notes = $6, converted_patient_id = $7
+       WHERE id = $1
+       RETURNING id, name, phone, status, source, notes, created_at, converted_patient_id`,
+      [dbId, insert.name, insert.phone, insert.status, insert.source, insert.notes, dbPatientId]
+    );
+    const lead = rows[0] ? mapLead(rows[0]) : undefined;
+    if (lead) {
+      this.cache.invalidate("crm:leads");
+    }
+    return lead;
+  }
+
+  async deleteLead(id: string): Promise<boolean> {
+    await this.waitForReady();
+    const dbId = this.convertId("leads", id);
+    const result = await pool.query("DELETE FROM leads WHERE id = $1", [dbId]);
+    const success = (result.rowCount ?? 0) > 0;
+    if (success) {
+      this.cache.invalidate("crm:leads");
+    }
+    return success;
+  }
+
+  // CRM - Interactions
+  async getInteractions(patientId?: string, leadId?: string): Promise<CRMInteraction[]> {
+    await this.waitForReady();
+    let queryStr = "SELECT id, patient_id, lead_id, date, type, channel, notes, outcome FROM crm_interactions";
+    const params: any[] = [];
+
+    if (patientId) {
+      queryStr += " WHERE patient_id = $1";
+      params.push(this.convertId("patients", patientId));
+    } else if (leadId) {
+      queryStr += " WHERE lead_id = $1";
+      params.push(this.convertId("leads", leadId));
+    }
+    queryStr += " ORDER BY date DESC";
+
+    const { rows } = await pool.query<DbCRMInteractionRow>(queryStr, params);
+    return rows.map(mapCRMInteraction);
+  }
+
+  async createInteraction(insert: InsertCRMInteraction): Promise<CRMInteraction> {
+    await this.waitForReady();
+    const useNumericId = this.usesNumericId("crm_interactions");
+    const query = useNumericId
+      ? `INSERT INTO crm_interactions(patient_id, lead_id, date, type, channel, notes, outcome)
+         VALUES($1, $2, $3, $4, $5, $6, $7)
+         RETURNING id, patient_id, lead_id, date, type, channel, notes, outcome`
+      : `INSERT INTO crm_interactions(id, patient_id, lead_id, date, type, channel, notes, outcome)
+         VALUES($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING id, patient_id, lead_id, date, type, channel, notes, outcome`;
+
+    const dbPatientId = insert.patientId ? this.convertId("patients", insert.patientId) : null;
+    const dbLeadId = insert.leadId ? this.convertId("leads", insert.leadId) : null;
+
+    const params = useNumericId
+      ? [dbPatientId, dbLeadId, insert.date, insert.type, insert.channel, insert.notes, insert.outcome]
+      : [randomUUID(), dbPatientId, dbLeadId, insert.date, insert.type, insert.channel, insert.notes, insert.outcome];
+
+    const { rows } = await pool.query<DbCRMInteractionRow>(query, params);
+    return mapCRMInteraction(rows[0]);
+  }
+
+  async updateInteraction(id: string, update: Partial<InsertCRMInteraction>): Promise<CRMInteraction | undefined> {
+    await this.waitForReady();
+    const dbId = this.convertId("crm_interactions", id);
+
+    // 1. Fetch current interaction to merge fields safely
+    const { rows: currentRows } = await pool.query<DbCRMInteractionRow>(
+      "SELECT id, patient_id, lead_id, date, type, channel, notes, outcome FROM crm_interactions WHERE id = $1",
+      [dbId]
+    );
+    const current = currentRows[0];
+    if (!current) return undefined;
+
+    // 2. Resolve field values (retain existing if undefined in update payload)
+    const dbPatientId = update.patientId !== undefined
+      ? (update.patientId ? this.convertId("patients", update.patientId) : null)
+      : current.patient_id;
+
+    const dbLeadId = update.leadId !== undefined
+      ? (update.leadId ? this.convertId("leads", update.leadId) : null)
+      : current.lead_id;
+
+    const date = update.date !== undefined ? update.date : current.date;
+    const type = update.type !== undefined ? update.type : current.type;
+    const channel = update.channel !== undefined ? update.channel : current.channel;
+    const notes = update.notes !== undefined ? update.notes : current.notes;
+    const outcome = update.outcome !== undefined ? update.outcome : current.outcome;
+
+    // 3. Update with resolved values
+    const { rows } = await pool.query<DbCRMInteractionRow>(
+      `UPDATE crm_interactions
+       SET patient_id = $1,
+           lead_id = $2,
+           date = $3,
+           type = $4,
+           channel = $5,
+           notes = $6,
+           outcome = $7
+       WHERE id = $8
+       RETURNING id, patient_id, lead_id, date, type, channel, notes, outcome`,
+      [
+        dbPatientId,
+        dbLeadId,
+        date,
+        type,
+        channel,
+        notes,
+        outcome,
+        dbId,
+      ]
+    );
+    return rows[0] ? mapCRMInteraction(rows[0]) : undefined;
+  }
+
+  // CRM - Tasks
+  async getCRMTasks(): Promise<CRMTask[]> {
+    await this.waitForReady();
+    const { rows } = await pool.query<DbCRMTaskRow>(
+      `SELECT t.id, t.description, t.patient_id, p.name as patient_name, t.lead_id, l.name as lead_name, t.due_date, t.status, t.priority
+       FROM crm_tasks t
+       LEFT JOIN patients p ON t.patient_id = p.id
+       LEFT JOIN leads l ON t.lead_id = l.id
+       ORDER BY t.due_date ASC`
+    );
+    return rows.map(mapCRMTask);
+  }
+
+  async createCRMTask(insert: InsertCRMTask): Promise<CRMTask> {
+    await this.waitForReady();
+    const useNumericId = this.usesNumericId("crm_tasks");
+    const query = useNumericId
+      ? `INSERT INTO crm_tasks(description, patient_id, lead_id, due_date, status, priority)
+         VALUES($1, $2, $3, $4, $5, $6)
+         RETURNING id, description, patient_id, lead_id, due_date, status, priority`
+      : `INSERT INTO crm_tasks(id, description, patient_id, lead_id, due_date, status, priority)
+         VALUES($1, $2, $3, $4, $5, $6, $7)
+         RETURNING id, description, patient_id, lead_id, due_date, status, priority`;
+
+    const dbPatientId = insert.patientId ? this.convertId("patients", insert.patientId) : null;
+    const dbLeadId = insert.leadId ? this.convertId("leads", insert.leadId) : null;
+
+    const params = useNumericId
+      ? [insert.description, dbPatientId, dbLeadId, insert.dueDate, insert.status, insert.priority]
+      : [randomUUID(), insert.description, dbPatientId, dbLeadId, insert.dueDate, insert.status, insert.priority];
+
+    const { rows } = await pool.query<DbCRMTaskRow>(query, params);
+    return mapCRMTask(rows[0]);
+  }
+
+  async updateCRMTaskStatus(id: string, status: "Pending" | "Completed"): Promise<CRMTask | undefined> {
+    await this.waitForReady();
+    const dbId = this.convertId("crm_tasks", id);
+    const { rows } = await pool.query<DbCRMTaskRow>(
+      `UPDATE crm_tasks
+       SET status = $2
+       WHERE id = $1
+       RETURNING id, description, patient_id, lead_id, due_date, status, priority`,
+      [dbId, status]
+    );
+    return rows[0] ? mapCRMTask(rows[0]) : undefined;
+  }
+
+  async deleteCRMTask(id: string): Promise<boolean> {
+    await this.waitForReady();
+    const dbId = this.convertId("crm_tasks", id);
+    const result = await pool.query("DELETE FROM crm_tasks WHERE id = $1", [dbId]);
+    return (result.rowCount ?? 0) > 0;
   }
 
   // Users/Auth

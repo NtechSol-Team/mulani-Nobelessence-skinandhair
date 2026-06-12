@@ -46,13 +46,8 @@ export default function AuthPage() {
         <div className="min-h-screen flex items-center justify-center bg-gray-50 border-t-4 border-primary">
             <div className="w-full max-w-md p-4">
                 <div className="flex flex-col justify-center space-y-6">
-                    <div className="space-y-2 text-center">
-                        <h1 className="text-3xl font-bold tracking-tighter sm:text-4xl md:text-5xl lg:text-6xl/none">
-                            Prime Care
-                        </h1>
-                        <p className="text-gray-500 md:text-xl">
-                            Advanced Skin Clinic Management System
-                        </p>
+                    <div className="flex justify-center mb-2">
+                        <img src="/logo.png" alt="Nobel Essence Logo" className="h-32 w-auto object-contain" />
                     </div>
                     <Card className="shadow-lg">
                         <CardHeader>

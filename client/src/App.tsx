@@ -13,9 +13,13 @@ import BillingCreate from "@/pages/billing-create";
 import BillingManage from "@/pages/bills";
 import Medicines from "@/pages/medicines";
 import Treatments from "@/pages/treatments";
+import Departments from "@/pages/departments";
 import Expenses from "@/pages/expenses";
 import AppointmentMaster from "@/pages/appointment-master";
 import Reports from "@/pages/reports";
+import CRMDashboard from "@/pages/crm-dashboard";
+import CRMLeads from "@/pages/crm-leads";
+import CRMTasks from "@/pages/crm-tasks";
 import AuthPage from "@/pages/auth-page";
 import NotFound from "@/pages/not-found";
 import { AuthProvider, useAuth } from "@/hooks/use-auth";
@@ -50,9 +54,13 @@ function Router() {
       <ProtectedRoute path="/bills" component={BillingManage} />
       <ProtectedRoute path="/medicines" component={Medicines} />
       <ProtectedRoute path="/treatments" component={Treatments} />
+      <ProtectedRoute path="/departments" component={Departments} />
       <ProtectedRoute path="/expenses" component={Expenses} />
       <ProtectedRoute path="/appointments" component={AppointmentMaster} />
       <ProtectedRoute path="/reports" component={Reports} />
+      <ProtectedRoute path="/crm" component={CRMDashboard} />
+      <ProtectedRoute path="/crm/leads" component={CRMLeads} />
+      <ProtectedRoute path="/crm/tasks" component={CRMTasks} />
       <Route component={NotFound} />
     </Switch>
   );
@@ -78,7 +86,7 @@ function App() {
                   rel="noopener noreferrer"
                   className="hover:underline hover:text-primary transition-colors cursor-pointer"
                 >
-                  Copyright © {new Date().getFullYear()} Nakrani Techno & Solution LLP. All Rights Reserved.
+                  {`Copyright © ${new Date().getFullYear()} Nakrani Techno & Solution LLP. All Rights Reserved.`}
                 </a>
               </div>
             </footer>

@@ -11,11 +11,23 @@ import {
   paymentAdjustmentSchema,
   insertAppointmentSchema,
   paginationSchema,
+  insertLeadSchema,
+  insertCRMInteractionSchema,
+  insertCRMTaskSchema,
+  insertDepartmentSchema,
   // registerSchema, loginSchema removed with auth
 } from "@shared/schema";
 import { z } from "zod";
 
 import { ensureAuthenticated } from "./auth";
+
+function getLocalDateString(): string {
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
 
 export async function registerRoutes(
   httpServer: Server,
@@ -334,7 +346,7 @@ export async function registerRoutes(
           billId: bill.id,
           patientId: bill.patientId,
           amount: validated.amountPaid,
-          date: new Date().toISOString().split('T')[0],
+          date: bill.date,
           paymentMode: validated.paymentMode || "Cash",
         });
       }
@@ -442,7 +454,7 @@ export async function registerRoutes(
           billId: bill.id,
           patientId: bill.patientId,
           amount: amountAdded,
-          date: new Date().toISOString().split('T')[0],
+          date: getLocalDateString(),
           paymentMode: paymentMode || "Cash",
         });
       }
@@ -477,6 +489,16 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Delete bill error:", error);
       res.status(500).json({ error: "Failed to delete bill" });
+    }
+  });
+
+  app.get("/api/payment-ledgers", async (req, res) => {
+    try {
+      const ledgers = await storage.getPaymentLedgers();
+      res.json(ledgers);
+    } catch (error) {
+      console.error("Error fetching payment ledgers:", error);
+      res.status(500).json({ error: "Failed to fetch payment ledgers" });
     }
   });
 
@@ -623,14 +645,303 @@ export async function registerRoutes(
     }
   });
 
-  // ==================== PAYMENT LEDGERS ====================
+  // ==================== CRM - LEADS ====================
 
-  app.get("/api/payment-ledgers", async (req, res) => {
+  app.get("/api/crm/leads", async (req, res) => {
     try {
-      const ledgers = await storage.getPaymentLedgers();
-      res.json(ledgers);
+      const leads = await storage.getLeads();
+      res.json(leads);
     } catch (error) {
-      res.status(500).json({ error: "Failed to fetch payment ledgers" });
+      res.status(500).json({ error: "Failed to fetch leads" });
+    }
+  });
+
+  app.get("/api/crm/leads/:id", async (req, res) => {
+    try {
+      const lead = await storage.getLead(req.params.id);
+      if (!lead) {
+        return res.status(404).json({ error: "Lead not found" });
+      }
+      res.json(lead);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch lead" });
+    }
+  });
+
+  app.post("/api/crm/leads", async (req, res) => {
+    try {
+      const validated = insertLeadSchema.parse(req.body);
+      const lead = await storage.createLead(validated);
+      res.status(201).json(lead);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        console.error("ZodError in POST /api/crm/leads:", error.errors);
+        return res.status(400).json({ error: error.errors });
+      }
+      console.error("Error in POST /api/crm/leads:", error);
+      res.status(500).json({ error: "Failed to create lead" });
+    }
+  });
+
+  app.patch("/api/crm/leads/:id", async (req, res) => {
+    try {
+      const validated = insertLeadSchema.parse(req.body);
+      const lead = await storage.updateLead(req.params.id, validated);
+      if (!lead) {
+        return res.status(404).json({ error: "Lead not found" });
+      }
+      res.json(lead);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        console.error("ZodError in PATCH /api/crm/leads:", error.errors);
+        return res.status(400).json({ error: error.errors });
+      }
+      console.error("Error in PATCH /api/crm/leads:", error);
+      res.status(500).json({ error: "Failed to update lead" });
+    }
+  });
+
+  app.delete("/api/crm/leads/:id", async (req, res) => {
+    try {
+      const deleted = await storage.deleteLead(req.params.id);
+      if (!deleted) {
+        return res.status(404).json({ error: "Lead not found" });
+      }
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete lead" });
+    }
+  });
+
+  // ==================== CRM - INTERACTIONS ====================
+
+  app.get("/api/crm/interactions", async (req, res) => {
+    try {
+      const patientId = req.query.patientId as string | undefined;
+      const leadId = req.query.leadId as string | undefined;
+      const interactions = await storage.getInteractions(patientId, leadId);
+      res.json(interactions);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch CRM interactions" });
+    }
+  });
+
+  app.post("/api/crm/interactions", async (req, res) => {
+    try {
+      const validated = insertCRMInteractionSchema.parse(req.body);
+      const interaction = await storage.createInteraction(validated);
+      res.status(201).json(interaction);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors });
+      }
+      res.status(500).json({ error: "Failed to log interaction" });
+    }
+  });
+
+  app.patch("/api/crm/interactions/:id", async (req, res) => {
+    try {
+      const validated = insertCRMInteractionSchema.partial().parse(req.body);
+      const interaction = await storage.updateInteraction(req.params.id, validated);
+      if (!interaction) {
+        return res.status(404).json({ error: "Interaction not found" });
+      }
+      res.json(interaction);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors });
+      }
+      res.status(500).json({ error: "Failed to update interaction" });
+    }
+  });
+
+  // ==================== CRM - TASKS ====================
+
+  app.get("/api/crm/tasks", async (req, res) => {
+    try {
+      const tasks = await storage.getCRMTasks();
+      res.json(tasks);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch CRM tasks" });
+    }
+  });
+
+  app.post("/api/crm/tasks", async (req, res) => {
+    try {
+      const validated = insertCRMTaskSchema.parse(req.body);
+      const task = await storage.createCRMTask(validated);
+      res.status(201).json(task);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors });
+      }
+      res.status(500).json({ error: "Failed to create CRM task" });
+    }
+  });
+
+  app.patch("/api/crm/tasks/:id", async (req, res) => {
+    try {
+      const { status } = req.body;
+      if (status !== "Pending" && status !== "Completed") {
+        return res.status(400).json({ error: "Invalid status" });
+      }
+      const task = await storage.updateCRMTaskStatus(req.params.id, status);
+      if (!task) {
+        return res.status(404).json({ error: "CRM task not found" });
+      }
+      res.json(task);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to update CRM task status" });
+    }
+  });
+
+  app.delete("/api/crm/tasks/:id", async (req, res) => {
+    try {
+      const deleted = await storage.deleteCRMTask(req.params.id);
+      if (!deleted) {
+        return res.status(404).json({ error: "CRM task not found" });
+      }
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete CRM task" });
+    }
+  });
+
+  // ==================== CRM - STATS & ANALYTICS ====================
+
+  app.get("/api/crm/stats", async (req, res) => {
+    try {
+      const leads = await storage.getLeads();
+      const patients = await storage.getPatients();
+
+      // Lead metrics
+      const totalLeads = leads.length;
+      const convertedLeads = leads.filter(l => l.status === "Converted").length;
+      const lostLeads = leads.filter(l => l.status === "Lost").length;
+      const activeLeads = totalLeads - convertedLeads - lostLeads;
+      const conversionRate = totalLeads > 0 ? (convertedLeads / totalLeads) * 100 : 0;
+
+      // Sources breakdown
+      const sourcesMap: Record<string, number> = {};
+      
+      // Count from converted/active leads
+      leads.forEach(l => {
+        const src = l.source || "Other";
+        sourcesMap[src] = (sourcesMap[src] || 0) + 1;
+      });
+      // Count from registered patients who might not have been leads but had a source
+      patients.forEach(p => {
+        const src = p.source || "Walk-in";
+        // If patient was converted from lead, we already counted their lead source, so avoid double counting
+        const isFromLead = leads.some(l => l.convertedPatientId === p.id);
+        if (!isFromLead) {
+          sourcesMap[src] = (sourcesMap[src] || 0) + 1;
+        }
+      });
+
+      const sourcesBreakdown = Object.entries(sourcesMap).map(([name, value]) => ({
+        name,
+        value,
+      }));
+
+      // Upcoming birthdays in next 7 days
+      const checkUpcomingBirthday = (dobString: string | undefined): boolean => {
+        if (!dobString) return false;
+        const parts = dobString.split('-');
+        if (parts.length < 3) return false;
+        const dobMonth = parseInt(parts[1], 10) - 1;
+        const dobDay = parseInt(parts[2], 10);
+        
+        const today = new Date();
+        const todayYear = today.getFullYear();
+        const compareDate = new Date(todayYear, today.getMonth(), today.getDate());
+        
+        // Calculate birthday for this year
+        let bdayThisYear = new Date(todayYear, dobMonth, dobDay);
+        // Calculate birthday for next year (in case the range overlaps the year boundary)
+        let bdayNextYear = new Date(todayYear + 1, dobMonth, dobDay);
+        
+        const diffMsThisYear = bdayThisYear.getTime() - compareDate.getTime();
+        const diffMsNextYear = bdayNextYear.getTime() - compareDate.getTime();
+        
+        const diffDaysThisYear = Math.ceil(diffMsThisYear / (1000 * 60 * 60 * 24));
+        const diffDaysNextYear = Math.ceil(diffMsNextYear / (1000 * 60 * 60 * 24));
+        
+        return (diffDaysThisYear >= 0 && diffDaysThisYear <= 7) || (diffDaysNextYear >= 0 && diffDaysNextYear <= 7);
+      };
+
+      const upcomingBirthdays = patients
+        .filter(p => p.dob && checkUpcomingBirthday(p.dob))
+        .map(p => ({
+          id: p.id,
+          name: p.name,
+          phone: p.phone,
+          dob: p.dob,
+        }));
+
+      res.json({
+        totalLeads,
+        convertedLeads,
+        lostLeads,
+        activeLeads,
+        conversionRate,
+        sourcesBreakdown,
+        upcomingBirthdays,
+      });
+    } catch (error) {
+      console.error("CRM stats error:", error);
+      res.status(500).json({ error: "Failed to generate CRM stats" });
+    }
+  });
+
+  // ==================== DEPARTMENTS ====================
+  app.get("/api/departments", async (req, res) => {
+    try {
+      const depts = await storage.getDepartments();
+      res.json(depts);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch departments" });
+    }
+  });
+
+  app.post("/api/departments", async (req, res) => {
+    try {
+      const validated = insertDepartmentSchema.parse(req.body);
+      const dept = await storage.createDepartment(validated);
+      res.status(201).json(dept);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors });
+      }
+      res.status(500).json({ error: "Failed to create department" });
+    }
+  });
+
+  app.patch("/api/departments/:id", async (req, res) => {
+    try {
+      const validated = insertDepartmentSchema.parse(req.body);
+      const dept = await storage.updateDepartment(req.params.id, validated);
+      if (!dept) {
+        return res.status(404).json({ error: "Department not found" });
+      }
+      res.json(dept);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors });
+      }
+      res.status(500).json({ error: "Failed to update department" });
+    }
+  });
+
+  app.delete("/api/departments/:id", async (req, res) => {
+    try {
+      const success = await storage.deleteDepartment(req.params.id);
+      if (!success) {
+        return res.status(404).json({ error: "Department not found" });
+      }
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete department" });
     }
   });
 

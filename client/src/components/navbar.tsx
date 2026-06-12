@@ -14,7 +14,9 @@ import {
   Calendar,
   Database,
   ChevronDown,
-  LogOut
+  LogOut,
+  Users,
+  CheckSquare
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useTheme } from "@/components/theme-provider";
@@ -40,6 +42,16 @@ const navItems = [
     children: [
       { path: "/medicines", label: "Medicine Master", icon: Pill },
       { path: "/treatments", label: "Treatment Master", icon: Stethoscope },
+      { path: "/departments", label: "Department Master", icon: Database },
+    ]
+  },
+  {
+    label: "CRM",
+    icon: Users,
+    children: [
+      { path: "/crm", label: "CRM Dashboard", icon: LayoutDashboard },
+      { path: "/crm/leads", label: "Leads Manager", icon: Users },
+      { path: "/crm/tasks", label: "CRM Tasks", icon: CheckSquare },
     ]
   },
   { path: "/reports", label: "Reports", icon: BarChart3 },
@@ -60,7 +72,7 @@ function NavDropdown({ item, isActive }: { item: any, isActive: boolean }) {
             variant={isActive ? "default" : "ghost"}
             size="sm"
             className="gap-2 shrink-0"
-            data-testid="nav-masters"
+            data-testid={`nav-${item.label.toLowerCase()}`}
           >
             <Icon className="w-4 h-4" />
             <span className="hidden lg:inline-block">{item.label}</span>
@@ -106,12 +118,15 @@ export function Navbar() {
       <div className="max-w-[1600px] mx-auto px-4">
         <div className="flex h-16 items-center justify-between gap-4">
           <Link href="/" className="flex items-center gap-2 shrink-0">
-            <div className="flex items-center justify-center w-9 h-9 rounded-md bg-primary">
-              <Heart className="w-5 h-5 text-primary-foreground" />
+            <img src="/logo.png" alt="Nobel Essence Logo" className="w-9 h-9 object-contain" />
+            <div className="flex flex-col">
+              <span className="text-sm font-semibold tracking-tight leading-none" data-testid="text-clinic-name">
+                Nobel Essence
+              </span>
+              <span className="text-[9px] text-muted-foreground font-medium hidden md:inline-block mt-0.5">
+                Hair Transplant * Cosmetic-Aestaetic center
+              </span>
             </div>
-            <span className="text-lg font-semibold tracking-tight hidden sm:inline-block" data-testid="text-clinic-name">
-              Clinic Care
-            </span>
           </Link>
 
           <div className="flex items-center gap-1 overflow-x-auto scrollbar-hide">

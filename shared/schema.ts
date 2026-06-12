@@ -27,15 +27,29 @@ export interface Patient {
   name: string;
   phone: string;
   registrationDate: string;
+  dob?: string;
+  status: "Active" | "Inactive" | "VIP";
+  source: string;
+  department?: string;
 }
 
 export const insertPatientSchema = z.object({
   name: z.string().min(1, "Patient name is required"),
-  phone: z.string().min(10, "Phone number must be at least 10 digits"),
+  phone: z.string().regex(/^\d{10}$/, "Phone number must be exactly 10 digits"),
   registrationDate: z.string(),
+  dob: z.string().optional().default(""),
+  status: z.enum(["Active", "Inactive", "VIP"]).default("Active"),
+  source: z.string().default("Walk-in"),
+  department: z.string().optional().default(""),
 });
 
 export type InsertPatient = z.infer<typeof insertPatientSchema>;
+
+export interface ConsumedMedicineItem {
+  medicineId: string;
+  medicineName: string;
+  quantity: number;
+}
 
 // Visit Schema
 export interface Visit {
@@ -45,13 +59,21 @@ export interface Visit {
   complaints: string;
   diagnosis: string;
   visitNumber: number;
+  prescription?: string;
+  consumedMedicines?: ConsumedMedicineItem[];
 }
 
 export const insertVisitSchema = z.object({
   patientId: z.string().min(1, "Patient ID is required"),
   date: z.string(),
-  complaints: z.string().min(1, "Complaints are required"),
-  diagnosis: z.string().min(1, "Diagnosis is required"),
+  complaints: z.string().optional().default(""),
+  diagnosis: z.string().optional().default(""),
+  prescription: z.string().optional().default(""),
+  consumedMedicines: z.array(z.object({
+    medicineId: z.string(),
+    medicineName: z.string(),
+    quantity: z.number().min(1),
+  })).optional().default([]),
 });
 
 export type InsertVisit = z.infer<typeof insertVisitSchema>;
@@ -118,6 +140,7 @@ export interface Bill {
   medicineTotal: number;
   grandTotal: number;
   discount: number;
+  discountType: "Percentage" | "INR";
   finalAmount: number;
   amountPaid: number;
   pendingAmount: number;
@@ -144,6 +167,7 @@ export const insertBillSchema = z.object({
   medicineTotal: z.number(),
   grandTotal: z.number(),
   discount: z.number().default(0),
+  discountType: z.enum(["Percentage", "INR"]).default("Percentage"),
   finalAmount: z.number(),
   amountPaid: z.number().min(0),
   paymentMode: z.enum(["Cash", "Online"]).default("Cash"),
@@ -256,4 +280,92 @@ export const insertPaymentLedgerSchema = z.object({
 });
 
 export type InsertPaymentLedger = z.infer<typeof insertPaymentLedgerSchema>;
+
+// Lead Schema
+export interface Lead {
+  id: string;
+  name: string;
+  phone?: string;
+  status: "New" | "Hot" | "Warm" | "Cold" | "Converted" | "Lost";
+  source: string;
+  notes: string;
+  createdAt: string;
+  convertedPatientId?: string;
+}
+
+export const insertLeadSchema = z.object({
+  name: z.string().min(1, "Name is required"),
+  phone: z.string().nullish().transform(val => val ?? "")
+    .refine(val => val === "" || /^\d{10}$/.test(val), {
+      message: "Phone number must be exactly 10 digits"
+    }),
+  status: z.enum(["New", "Hot", "Warm", "Cold", "Converted", "Lost"]).default("New"),
+  source: z.string().default("Instagram"),
+  notes: z.string().nullish().transform(val => val ?? ""),
+  createdAt: z.string(),
+  convertedPatientId: z.string().nullish().transform(val => val || undefined),
+});
+
+export type InsertLead = z.infer<typeof insertLeadSchema>;
+
+// CRM Interaction Schema
+export interface CRMInteraction {
+  id: string;
+  patientId?: string;
+  leadId?: string;
+  date: string;
+  type: "Inquiry" | "Follow-up" | "Treatment Feedback" | "Complaint" | "Birthday Wish" | "Appointment Confirmation";
+  channel: "Call" | "WhatsApp" | "Email" | "In-Person";
+  notes: string;
+  outcome: string;
+}
+
+export const insertCRMInteractionSchema = z.object({
+  patientId: z.string().optional(),
+  leadId: z.string().optional(),
+  date: z.string(),
+  type: z.enum(["Inquiry", "Follow-up", "Treatment Feedback", "Complaint", "Birthday Wish", "Appointment Confirmation"]),
+  channel: z.enum(["Call", "WhatsApp", "Email", "In-Person"]),
+  notes: z.string().min(1, "Notes are required"),
+  outcome: z.string().optional().default(""),
+});
+
+export type InsertCRMInteraction = z.infer<typeof insertCRMInteractionSchema>;
+
+// CRM Task Schema
+export interface CRMTask {
+  id: string;
+  description: string;
+  patientId?: string;
+  patientName?: string;
+  leadId?: string;
+  leadName?: string;
+  dueDate: string;
+  status: "Pending" | "Completed";
+  priority: "Low" | "Medium" | "High";
+}
+
+export const insertCRMTaskSchema = z.object({
+  description: z.string().min(1, "Description is required"),
+  patientId: z.string().optional(),
+  leadId: z.string().optional(),
+  dueDate: z.string(),
+  status: z.enum(["Pending", "Completed"]).default("Pending"),
+  priority: z.enum(["Low", "Medium", "High"]).default("Medium"),
+});
+
+export type InsertCRMTask = z.infer<typeof insertCRMTaskSchema>;
+
+
+// Department Schema
+export interface Department {
+  id: string;
+  name: string;
+}
+
+export const insertDepartmentSchema = z.object({
+  name: z.string().min(1, "Department name is required"),
+});
+
+export type InsertDepartment = z.infer<typeof insertDepartmentSchema>;
 

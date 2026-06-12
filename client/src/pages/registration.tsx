@@ -1,8 +1,9 @@
+import { useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { UserPlus, Calendar, Phone, User, FileText, Stethoscope } from "lucide-react";
+import { UserPlus, Calendar, Phone, User, FileText, Stethoscope, Gift } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,14 +17,14 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
-import { insertPatientSchema, insertVisitSchema, type InsertPatient } from "@shared/schema";
+import { insertPatientSchema, insertVisitSchema, type InsertPatient, type Department } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
 import { format } from "date-fns";
 import { z } from "zod";
 
 const registrationSchema = insertPatientSchema.extend({
-  complaints: z.string().min(1, "Complaints are required"),
-  diagnosis: z.string().min(1, "Diagnosis is required"),
+  complaints: z.string().optional().default(""),
+  diagnosis: z.string().optional().default(""),
 });
 
 type RegistrationForm = z.infer<typeof registrationSchema>;
@@ -33,16 +34,52 @@ export default function Registration() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
+  const { data: departmentsResponse } = useQuery({
+    queryKey: ["/api/departments"],
+  });
+  const departments = Array.isArray(departmentsResponse) ? (departmentsResponse as Department[]) : [];
+
+  const searchParams = new URLSearchParams(window.location.search);
+  const leadId = searchParams.get("leadId");
+  const initName = searchParams.get("name") || "";
+  const initPhone = searchParams.get("phone") || "";
+  const initSource = searchParams.get("source") || "Walk-in";
+
+  const { data: lead } = useQuery({
+    queryKey: [`/api/crm/leads/${leadId}`],
+    enabled: !!leadId,
+  });
+
   const form = useForm<RegistrationForm>({
     resolver: zodResolver(registrationSchema),
     defaultValues: {
-      name: "",
-      phone: "",
+      name: initName,
+      phone: initPhone,
       registrationDate: format(new Date(), "yyyy-MM-dd"),
       complaints: "",
       diagnosis: "",
+      dob: "",
+      status: "Active",
+      source: initSource,
+      department: "",
     },
   });
+
+  useEffect(() => {
+    if (initName || initPhone || initSource) {
+      form.reset({
+        name: initName,
+        phone: initPhone,
+        registrationDate: format(new Date(), "yyyy-MM-dd"),
+        complaints: "",
+        diagnosis: "",
+        dob: "",
+        status: "Active",
+        source: initSource,
+        department: "",
+      });
+    }
+  }, [initName, initPhone, initSource]);
 
   const mutation = useMutation({
     mutationFn: async (data: RegistrationForm) => {
@@ -50,6 +87,10 @@ export default function Registration() {
         name: data.name,
         phone: data.phone,
         registrationDate: data.registrationDate,
+        dob: data.dob,
+        status: data.status,
+        source: data.source,
+        department: data.department || "",
       };
       
       const patientResponse = await apiRequest("POST", "/api/patients", patientData);
@@ -61,12 +102,21 @@ export default function Registration() {
         complaints: data.complaints,
         diagnosis: data.diagnosis,
       });
+
+      if (leadId && lead) {
+        await apiRequest("PATCH", `/api/crm/leads/${leadId}`, {
+          ...lead,
+          status: "Converted",
+          convertedPatientId: patient.id,
+        });
+      }
       
       return patient;
     },
     onSuccess: (patient) => {
       queryClient.invalidateQueries({ queryKey: ["/api/patients"] });
       queryClient.invalidateQueries({ queryKey: ["/api/visits"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/leads"] });
       toast({
         title: "Patient Registered",
         description: `${patient.name} has been successfully registered.`,
@@ -169,6 +219,82 @@ export default function Registration() {
                           {...field}
                           data-testid="input-registration-date"
                         />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="dob"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="flex items-center gap-2">
+                        <Gift className="w-4 h-4" />
+                        Date of Birth
+                      </FormLabel>
+                      <FormControl>
+                        <Input
+                          type="date"
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+
+
+                <FormField
+                  control={form.control}
+                  name="department"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="flex items-center gap-2">
+                        <Stethoscope className="w-4 h-4" />
+                        Treatment Department
+                      </FormLabel>
+                      <FormControl>
+                        <select
+                          className="w-full h-10 border rounded-md px-3 bg-background"
+                          {...field}
+                        >
+                          <option value="">Select Department...</option>
+                          {departments.map((dept) => (
+                            <option key={dept.id} value={dept.name}>
+                              {dept.name}
+                            </option>
+                          ))}
+                        </select>
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="source"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="flex items-center gap-2">
+                        <User className="w-4 h-4" />
+                        Marketing Source
+                      </FormLabel>
+                      <FormControl>
+                        <select
+                          className="w-full h-10 border rounded-md px-3 bg-background"
+                          {...field}
+                        >
+                          <option value="Walk-in">Walk-in</option>
+                          <option value="Google Search">Google Search</option>
+                          <option value="Instagram">Instagram</option>
+                          <option value="Facebook">Facebook</option>
+                          <option value="Friend Referral">Friend Referral</option>
+                          <option value="Other">Other</option>
+                        </select>
                       </FormControl>
                       <FormMessage />
                     </FormItem>

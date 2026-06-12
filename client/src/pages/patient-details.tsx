@@ -15,6 +15,10 @@ import {
   X,
   Check,
   Trash2,
+  Gift,
+  MessageSquare,
+  CheckSquare,
+  Activity,
 } from "lucide-react";
 import {
   AlertDialog,
@@ -49,17 +53,20 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
-import type { Patient, Visit, Bill } from "@shared/schema";
+import type { Patient, Visit, Bill, CRMInteraction, Department, Medicine } from "@shared/schema";
 import { insertVisitSchema, insertPatientSchema } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
 import { extractPaginatedData } from "@/lib/utils";
 import { format } from "date-fns";
 import { z } from "zod";
 
+const t = (text: string) => text;
+
 const addVisitSchema = z.object({
   date: z.string(),
-  complaints: z.string().min(1, "Complaints are required"),
-  diagnosis: z.string().min(1, "Diagnosis is required"),
+  complaints: z.string().optional().default(""),
+  diagnosis: z.string().optional().default(""),
+  prescription: z.string().optional().default(""),
 });
 
 type AddVisitForm = z.infer<typeof addVisitSchema>;
@@ -69,6 +76,20 @@ export default function PatientDetails() {
   const patientId = params?.id;
   const { toast } = useToast();
   const queryClient = useQueryClient();
+
+  const { data: departmentsResponse } = useQuery({
+    queryKey: ["/api/departments"],
+  });
+  const departments = Array.isArray(departmentsResponse) ? (departmentsResponse as Department[]) : [];
+
+  const { data: medicinesResponse } = useQuery({
+    queryKey: ["/api/medicines"],
+  });
+  const medicines = extractPaginatedData<Medicine>(medicinesResponse);
+
+  const [addVisitConsumed, setAddVisitConsumed] = useState<{ medicineId: string; medicineName: string; quantity: number }[]>([]);
+  const [editVisitConsumed, setEditVisitConsumed] = useState<{ medicineId: string; medicineName: string; quantity: number }[]>([]);
+
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isEditingPatient, setIsEditingPatient] = useState(false);
@@ -93,12 +114,151 @@ export default function PatientDetails() {
     .filter((b) => b.patientId === patientId)
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
+  const [editingInteraction, setEditingInteraction] = useState<CRMInteraction | null>(null);
+  const [isCRMDialogOpen, setIsCRMDialogOpen] = useState(false);
+  const [isTaskDialogOpen, setIsTaskDialogOpen] = useState(false);
+
+  const { data: crmInteractions = [] } = useQuery<CRMInteraction[]>({
+    queryKey: [`/api/crm/interactions?patientId=${patientId}`],
+    enabled: !!patientId,
+  });
+
+  const crmForm = useForm({
+    defaultValues: {
+      date: format(new Date(), "yyyy-MM-dd"),
+      type: "Follow-up",
+      channel: "Call",
+      notes: "",
+      outcome: "",
+      nextCallingDate: "",
+    }
+  });
+
+  const crmTaskForm = useForm({
+    defaultValues: {
+      dueDate: format(new Date(), "yyyy-MM-dd"),
+      description: "",
+      priority: "Medium",
+    }
+  });
+
+  const addInteractionMutation = useMutation({
+    mutationFn: async (data: any) => {
+      const { nextCallingDate, ...interactionData } = data;
+      const interaction = await apiRequest("POST", "/api/crm/interactions", {
+        patientId,
+        ...interactionData,
+      });
+
+      if (nextCallingDate) {
+        await apiRequest("POST", "/api/crm/tasks", {
+          description: `Follow-up Call: ${patient?.name || "Patient"}`,
+          patientId,
+          dueDate: nextCallingDate,
+          status: "Pending",
+          priority: "Medium"
+        });
+      }
+      return interaction;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/crm/interactions?patientId=${patientId}`] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/tasks"] });
+      toast({
+        title: "Interaction Logged",
+        description: "Communication logged successfully.",
+      });
+      setIsCRMDialogOpen(false);
+      crmForm.reset({
+        date: format(new Date(), "yyyy-MM-dd"),
+        type: "Follow-up",
+        channel: "Call",
+        notes: "",
+        outcome: "",
+        nextCallingDate: "",
+      });
+    },
+    onError: (err: any) => {
+      toast({
+        title: "Failed to log interaction",
+        description: err.message,
+        variant: "destructive",
+      });
+    }
+  });
+
+  const updateInteractionMutation = useMutation({
+    mutationFn: async ({ id, ...data }: { id: string; [key: string]: any }) => {
+      const { nextCallingDate, ...interactionData } = data;
+      return await apiRequest("PATCH", `/api/crm/interactions/${id}`, {
+        ...interactionData,
+        patientId: editingInteraction?.patientId || patientId || undefined,
+        leadId: editingInteraction?.leadId || undefined,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/crm/interactions?patientId=${patientId}`] });
+      toast({
+        title: "Interaction Updated",
+        description: "Communication log has been updated successfully.",
+      });
+      setIsCRMDialogOpen(false);
+      setEditingInteraction(null);
+      crmForm.reset({
+        date: format(new Date(), "yyyy-MM-dd"),
+        type: "Follow-up",
+        channel: "Call",
+        notes: "",
+        outcome: "",
+        nextCallingDate: "",
+      });
+    },
+    onError: (err: any) => {
+      toast({
+        title: "Failed to update interaction",
+        description: err.message,
+        variant: "destructive",
+      });
+    }
+  });
+
+  const addTaskMutation = useMutation({
+    mutationFn: async (data: any) => {
+      return await apiRequest("POST", "/api/crm/tasks", {
+        patientId,
+        ...data,
+        status: "Pending",
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/tasks"] });
+      toast({
+        title: "CRM Task Added",
+        description: "New CRM reminder has been created.",
+      });
+      setIsTaskDialogOpen(false);
+      crmTaskForm.reset({
+        dueDate: format(new Date(), "yyyy-MM-dd"),
+        description: "",
+        priority: "Medium",
+      });
+    },
+    onError: (err: any) => {
+      toast({
+        title: "Failed to create CRM task",
+        description: err.message,
+        variant: "destructive",
+      });
+    }
+  });
+
   const form = useForm<AddVisitForm>({
     resolver: zodResolver(addVisitSchema),
     defaultValues: {
       date: format(new Date(), "yyyy-MM-dd"),
       complaints: "",
       diagnosis: "",
+      prescription: "",
     },
   });
 
@@ -108,6 +268,10 @@ export default function PatientDetails() {
       name: patient?.name || "",
       phone: patient?.phone || "",
       registrationDate: patient?.registrationDate || format(new Date(), "yyyy-MM-dd"),
+      dob: patient?.dob || "",
+      status: patient?.status || "Active",
+      source: patient?.source || "Walk-in",
+      department: patient?.department || "",
     },
   });
 
@@ -117,6 +281,7 @@ export default function PatientDetails() {
       date: format(new Date(), "yyyy-MM-dd"),
       complaints: "",
       diagnosis: "",
+      prescription: "",
     },
   });
 
@@ -125,19 +290,23 @@ export default function PatientDetails() {
       return await apiRequest("POST", "/api/visits", {
         patientId,
         ...data,
+        consumedMedicines: addVisitConsumed,
       });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/visits", patientId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/medicines"] });
       toast({
         title: "Visit Added",
         description: "New visit has been recorded successfully.",
       });
       setIsDialogOpen(false);
+      setAddVisitConsumed([]);
       form.reset({
         date: format(new Date(), "yyyy-MM-dd"),
         complaints: "",
         diagnosis: "",
+        prescription: "",
       });
     },
     onError: (error: Error) => {
@@ -177,10 +346,12 @@ export default function PatientDetails() {
       return await apiRequest("PATCH", `/api/visits/${editingVisit.id}`, {
         patientId,
         ...data,
+        consumedMedicines: editVisitConsumed,
       });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/visits", patientId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/medicines"] });
       toast({
         title: "Visit Updated",
         description: "Visit details have been updated successfully.",
@@ -226,7 +397,9 @@ export default function PatientDetails() {
       date: visit.date,
       complaints: visit.complaints,
       diagnosis: visit.diagnosis,
+      prescription: visit.prescription || "",
     });
+    setEditVisitConsumed(visit.consumedMedicines || []);
     setIsEditDialogOpen(true);
   };
 
@@ -234,6 +407,7 @@ export default function PatientDetails() {
     setIsEditDialogOpen(open);
     if (!open) {
       setEditingVisit(null);
+      setEditVisitConsumed([]);
     }
   };
 
@@ -256,9 +430,9 @@ export default function PatientDetails() {
       <div className="p-6 max-w-4xl mx-auto">
         <div className="text-center py-12">
           <User className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-          <h3 className="text-lg font-medium mb-1">Patient Not Found</h3>
+          <h3 className="text-lg font-medium mb-1">{"Patient Not Found"}</h3>
           <p className="text-muted-foreground text-sm mb-4">
-            The patient you're looking for doesn't exist.
+            {"The patient you're looking for doesn't exist."}
           </p>
           <Link href="/">
             <Button variant="outline">
@@ -272,7 +446,7 @@ export default function PatientDetails() {
   }
 
   return (
-    <div className="p-6 max-w-4xl mx-auto space-y-6">
+    <div className="p-6 max-w-7xl mx-auto space-y-6">
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-start gap-4 flex-1">
           <Link href="/">
@@ -282,7 +456,24 @@ export default function PatientDetails() {
           </Link>
           {isEditingPatient ? (
             <div className="flex-1">
-              <Form {...patientForm}>
+              <Form
+                watch={patientForm.watch as any}
+                getValues={patientForm.getValues as any}
+                setError={patientForm.setError as any}
+                clearErrors={patientForm.clearErrors as any}
+                setValue={patientForm.setValue as any}
+                trigger={patientForm.trigger as any}
+                formState={patientForm.formState as any}
+                resetField={patientForm.resetField as any}
+                reset={patientForm.reset as any}
+                handleSubmit={patientForm.handleSubmit as any}
+                control={patientForm.control as any}
+                register={patientForm.register as any}
+                getFieldState={patientForm.getFieldState as any}
+                unregister={patientForm.unregister as any}
+                setFocus={patientForm.setFocus as any}
+                subscribe={(patientForm as any).subscribe}
+              >
                 <form
                   onSubmit={patientForm.handleSubmit((data) =>
                     updatePatientMutation.mutate(data)
@@ -296,8 +487,12 @@ export default function PatientDetails() {
                       <FormItem>
                         <FormControl>
                           <Input
-                            placeholder="Patient name"
-                            {...field}
+                            placeholder={t("Patient name")}
+                            name={field.name}
+                            value={field.value}
+                            onChange={field.onChange}
+                            onBlur={field.onBlur}
+                            ref={field.ref}
                             className="text-2xl font-semibold"
                           />
                         </FormControl>
@@ -311,7 +506,40 @@ export default function PatientDetails() {
                     render={({ field }) => (
                       <FormItem>
                         <FormControl>
-                          <Input placeholder="Phone number" {...field} />
+                          <Input
+                            placeholder={t("Phone number")}
+                            name={field.name}
+                            value={field.value}
+                            onChange={field.onChange}
+                            onBlur={field.onBlur}
+                            ref={field.ref}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={patientForm.control}
+                    name="department"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormControl>
+                          <select
+                            className="w-full h-10 border rounded-md px-3 bg-background text-sm"
+                            name={field.name}
+                            value={field.value}
+                            onChange={field.onChange}
+                            onBlur={field.onBlur}
+                            ref={field.ref}
+                          >
+                            <option value="">Select Department...</option>
+                            {departments.map((dept) => (
+                              <option key={dept.id} value={dept.name}>
+                                {dept.name}
+                              </option>
+                            ))}
+                          </select>
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -357,6 +585,10 @@ export default function PatientDetails() {
                       phone: patient?.phone || "",
                       registrationDate:
                         patient?.registrationDate || format(new Date(), "yyyy-MM-dd"),
+                      dob: patient?.dob || "",
+                      status: patient?.status || "Active",
+                      source: patient?.source || "Walk-in",
+                      department: patient?.department || "",
                     });
                     setIsEditingPatient(true);
                   }}
@@ -409,12 +641,43 @@ export default function PatientDetails() {
                   <Calendar className="w-3 h-3" />
                   Registered: {format(new Date(patient?.registrationDate || ""), "dd MMM yyyy")}
                 </span>
+                {patient?.dob && (
+                  <>
+                    <span className="text-border">|</span>
+                    <span className="flex items-center gap-1">
+                      <Gift className="w-3 h-3 text-pink-500" />
+                      DOB: {format(new Date(patient.dob), "dd MMM yyyy")}
+                    </span>
+                  </>
+                )}
+                <span className="text-border">|</span>
+                <Badge variant={patient?.status === "VIP" ? "default" : patient?.status === "Inactive" ? "secondary" : "outline"} className={patient?.status === "VIP" ? "bg-amber-500 hover:bg-amber-600 text-white border-transparent" : ""}>
+                  {patient?.status}
+                </Badge>
+                <span className="text-border">|</span>
+                <span className="text-xs bg-muted px-2 py-0.5 rounded text-muted-foreground font-medium">
+                  Source: {patient?.source}
+                </span>
+                {patient?.department && (
+                  <>
+                    <span className="text-border">|</span>
+                    <span className="text-xs bg-primary/10 px-2 py-0.5 rounded text-primary font-medium flex items-center gap-1">
+                      <Stethoscope className="w-3 h-3 text-primary" />
+                      {patient.department}
+                    </span>
+                  </>
+                )}
               </div>
             </div>
           )}
         </div>
       </div>
 
+      {/* Two-column layout: Visit History left, Bill + CRM right */}
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+
+      {/* Left Column — Visit History (3/5 width) */}
+      <div className="lg:col-span-3 space-y-6">
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-4 pb-4">
           <div>
@@ -490,6 +753,97 @@ export default function PatientDetails() {
                       </FormItem>
                     )}
                   />
+
+                  <FormField
+                    control={form.control}
+                    name="prescription"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Prescription</FormLabel>
+                        <FormControl>
+                          <Textarea
+                            placeholder="Enter prescribed medicines, dosages, and instructions..."
+                            className="min-h-[100px] resize-none"
+                            {...field}
+                            data-testid="input-visit-prescription"
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <div className="space-y-3 border-t pt-3">
+                    <div className="flex items-center justify-between">
+                      <label className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Consumed Stock Items (Misc. Not Billed)</label>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          setAddVisitConsumed([...addVisitConsumed, { medicineId: "", medicineName: "", quantity: 1 }]);
+                        }}
+                      >
+                        <Plus className="w-3.5 h-3.5 mr-1" />
+                        Add Item
+                      </Button>
+                    </div>
+                    {addVisitConsumed.length === 0 ? (
+                      <p className="text-xs text-muted-foreground italic">No items consumed during this visit.</p>
+                    ) : (
+                      <div className="space-y-2 max-h-[150px] overflow-y-auto pr-1">
+                        {addVisitConsumed.map((item, idx) => (
+                          <div key={idx} className="flex gap-2 items-center">
+                            <select
+                              className="flex-1 h-9 border rounded-md px-3 bg-background text-sm"
+                              value={item.medicineId}
+                              onChange={(e) => {
+                                const medId = e.target.value;
+                                const med = medicines.find(m => m.id === medId);
+                                const updated = [...addVisitConsumed];
+                                updated[idx] = {
+                                  medicineId: medId,
+                                  medicineName: med ? med.name : "",
+                                  quantity: item.quantity
+                                };
+                                setAddVisitConsumed(updated);
+                              }}
+                            >
+                              <option value="">Select Item/Consumable...</option>
+                              {medicines.map((m) => (
+                                <option key={m.id} value={m.id}>
+                                  {m.name} (Stock: {m.quantity})
+                                </option>
+                              ))}
+                            </select>
+                            <Input
+                              type="number"
+                              min="1"
+                              className="w-20 h-9"
+                              value={item.quantity}
+                              onChange={(e) => {
+                                const qty = parseInt(e.target.value) || 1;
+                                const updated = [...addVisitConsumed];
+                                updated[idx].quantity = qty;
+                                setAddVisitConsumed(updated);
+                              }}
+                            />
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="text-destructive h-9 w-9 shrink-0"
+                              onClick={() => {
+                                setAddVisitConsumed(addVisitConsumed.filter((_, i) => i !== idx));
+                              }}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
 
                   <div className="flex justify-end gap-3 pt-2">
                     <Button
@@ -575,6 +929,18 @@ export default function PatientDetails() {
                       </div>
                     </div>
 
+                    {visit.prescription && (
+                      <div className="p-3 rounded-lg bg-emerald-50/50 border border-emerald-100/50 mt-2">
+                        <div className="flex items-center gap-2 text-sm font-medium text-emerald-700 mb-2">
+                          <FileText className="w-4 h-4 text-emerald-600" />
+                          Prescription
+                        </div>
+                        <p className="text-sm text-foreground/90 whitespace-pre-wrap font-medium">
+                          {visit.prescription}
+                        </p>
+                      </div>
+                    )}
+
                     {/* Show medicines from bills on the same date */}
                     {(() => {
                       const visitDateStr = format(new Date(visit.date), "yyyy-MM-dd");
@@ -599,6 +965,22 @@ export default function PatientDetails() {
                         </div>
                       );
                     })()}
+
+                    {visit.consumedMedicines && visit.consumedMedicines.length > 0 && (
+                      <div className="p-3 rounded-lg bg-amber-500/5 border border-amber-500/10 mt-2">
+                        <div className="flex items-center gap-2 text-sm font-medium text-amber-600 mb-2">
+                          <Activity className="w-4 h-4 text-amber-500" />
+                          Stock Items Consumed (Misc.)
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {visit.consumedMedicines.map((m, idx) => (
+                            <Badge key={idx} variant="outline" className="text-xs border-amber-200 text-amber-700 bg-amber-50/50">
+                              {m.medicineName} x{m.quantity}
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
@@ -606,6 +988,10 @@ export default function PatientDetails() {
           )}
         </CardContent>
       </Card>
+      </div>
+
+      {/* Right Column — Bill History + CRM (2/5 width) */}
+      <div className="lg:col-span-2 space-y-6">
 
       <Dialog open={isEditDialogOpen} onOpenChange={handleEditDialogChange}>
         <DialogContent className="sm:max-w-lg">
@@ -669,6 +1055,97 @@ export default function PatientDetails() {
                     </FormItem>
                   )}
                 />
+
+                <FormField
+                  control={editForm.control}
+                  name="prescription"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Prescription</FormLabel>
+                      <FormControl>
+                        <Textarea
+                          placeholder="Update prescribed medicines, dosages, and instructions..."
+                          className="min-h-[100px] resize-none"
+                          {...field}
+                          data-testid="input-edit-visit-prescription"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <div className="space-y-3 border-t pt-3">
+                  <div className="flex items-center justify-between">
+                    <label className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Consumed Stock Items (Misc. Not Billed)</label>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setEditVisitConsumed([...editVisitConsumed, { medicineId: "", medicineName: "", quantity: 1 }]);
+                      }}
+                    >
+                      <Plus className="w-3.5 h-3.5 mr-1" />
+                      Add Item
+                    </Button>
+                  </div>
+                  {editVisitConsumed.length === 0 ? (
+                    <p className="text-xs text-muted-foreground italic">No items consumed during this visit.</p>
+                  ) : (
+                    <div className="space-y-2 max-h-[150px] overflow-y-auto pr-1">
+                      {editVisitConsumed.map((item, idx) => (
+                        <div key={idx} className="flex gap-2 items-center">
+                          <select
+                            className="flex-1 h-9 border rounded-md px-3 bg-background text-sm"
+                            value={item.medicineId}
+                            onChange={(e) => {
+                              const medId = e.target.value;
+                              const med = medicines.find(m => m.id === medId);
+                              const updated = [...editVisitConsumed];
+                              updated[idx] = {
+                                medicineId: medId,
+                                medicineName: med ? med.name : "",
+                                quantity: item.quantity
+                              };
+                              setEditVisitConsumed(updated);
+                            }}
+                          >
+                            <option value="">Select Item/Consumable...</option>
+                            {medicines.map((m) => (
+                              <option key={m.id} value={m.id}>
+                                {m.name} (Stock: {m.quantity})
+                              </option>
+                            ))}
+                          </select>
+                          <Input
+                            type="number"
+                            min="1"
+                            className="w-20 h-9"
+                            value={item.quantity}
+                            onChange={(e) => {
+                              const qty = parseInt(e.target.value) || 1;
+                              const updated = [...editVisitConsumed];
+                              updated[idx].quantity = qty;
+                              setEditVisitConsumed(updated);
+                            }}
+                          />
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="text-destructive h-9 w-9 shrink-0"
+                            onClick={() => {
+                              setEditVisitConsumed(editVisitConsumed.filter((_, i) => i !== idx));
+                            }}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
 
                 <div className="flex justify-end gap-3 pt-2">
                   <Button
@@ -750,6 +1227,257 @@ export default function PatientDetails() {
           )}
         </CardContent>
       </Card>
+
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between gap-4 pb-4">
+          <div>
+            <CardTitle className="text-lg">CRM History & Follow-ups</CardTitle>
+            <p className="text-sm text-muted-foreground mt-1">
+              {crmInteractions.length} interaction{crmInteractions.length !== 1 ? "s" : ""} logged
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <Dialog open={isCRMDialogOpen} onOpenChange={(open) => {
+              setIsCRMDialogOpen(open);
+              if (!open) {
+                setEditingInteraction(null);
+                crmForm.reset({
+                  date: format(new Date(), "yyyy-MM-dd"),
+                  type: "Follow-up",
+                  channel: "Call",
+                  notes: "",
+                  outcome: "",
+                  nextCallingDate: "",
+                });
+              }
+            }}>
+              <DialogTrigger asChild>
+                <Button variant="outline" size="sm" onClick={() => setIsCRMDialogOpen(true)}>
+                  <MessageSquare className="w-4 h-4 mr-2" />
+                  Log Contact
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-md">
+                <DialogHeader>
+                  <DialogTitle>{editingInteraction ? t("Edit CRM Interaction") : t("Log CRM Interaction")}</DialogTitle>
+                </DialogHeader>
+                <form
+                  onSubmit={crmForm.handleSubmit((data) => {
+                    if (editingInteraction) {
+                      updateInteractionMutation.mutate({ id: editingInteraction.id, ...data });
+                    } else {
+                      addInteractionMutation.mutate(data);
+                    }
+                  })}
+                  className="space-y-4"
+                >
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-xs font-semibold uppercase tracking-wider block mb-1">{t("Date")}</label>
+                      <Input
+                        type="date"
+                        name={crmForm.register("date").name}
+                        onChange={crmForm.register("date").onChange}
+                        onBlur={crmForm.register("date").onBlur}
+                        ref={crmForm.register("date").ref}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold uppercase tracking-wider block mb-1">{t("Channel")}</label>
+                      <select
+                        className="w-full h-10 border rounded-md px-3 bg-background"
+                        name={crmForm.register("channel").name}
+                        onChange={crmForm.register("channel").onChange}
+                        onBlur={crmForm.register("channel").onBlur}
+                        ref={crmForm.register("channel").ref}
+                      >
+                        <option value="Call">{t("Call")}</option>
+                        <option value="WhatsApp">{t("WhatsApp")}</option>
+                        <option value="Email">{t("Email")}</option>
+                        <option value="In-Person">{t("In-Person")}</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold uppercase tracking-wider block mb-1">{t("Interaction Type")}</label>
+                    <select
+                      className="w-full h-10 border rounded-md px-3 bg-background"
+                      name={crmForm.register("type").name}
+                      onChange={crmForm.register("type").onChange}
+                      onBlur={crmForm.register("type").onBlur}
+                      ref={crmForm.register("type").ref}
+                    >
+                      <option value="Follow-up">{t("Follow-up")}</option>
+                      <option value="Inquiry">{t("Inquiry")}</option>
+                      <option value="Treatment Feedback">{t("Treatment Feedback")}</option>
+                      <option value="Appointment Confirmation">{t("Appointment Confirmation")}</option>
+                      <option value="Birthday Wish">{t("Birthday Wish")}</option>
+                      <option value="Complaint">{t("Complaint")}</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold uppercase tracking-wider block mb-1">{t("Notes")}</label>
+                    <Textarea
+                      placeholder={t("Interaction details...")}
+                      className="min-h-[80px]"
+                      name={crmForm.register("notes").name}
+                      onChange={crmForm.register("notes").onChange}
+                      onBlur={crmForm.register("notes").onBlur}
+                      ref={crmForm.register("notes").ref}
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold uppercase tracking-wider block mb-1">{t("Outcome (Optional)")}</label>
+                    <Input
+                      placeholder={t("e.g., patient booked appointment, will call back later...")}
+                      name={crmForm.register("outcome").name}
+                      onChange={crmForm.register("outcome").onChange}
+                      onBlur={crmForm.register("outcome").onBlur}
+                      ref={crmForm.register("outcome").ref}
+                    />
+                  </div>
+                  {!editingInteraction && (
+                    <div>
+                      <label className="text-xs font-semibold uppercase tracking-wider block mb-1">{t("Next Calling Date (Optional)")}</label>
+                      <Input
+                        type="date"
+                        name={crmForm.register("nextCallingDate").name}
+                        onChange={crmForm.register("nextCallingDate").onChange}
+                        onBlur={crmForm.register("nextCallingDate").onBlur}
+                        ref={crmForm.register("nextCallingDate").ref}
+                      />
+                    </div>
+                  )}
+                  <div className="flex justify-end gap-3 pt-2">
+                    <Button type="button" variant="outline" onClick={() => setIsCRMDialogOpen(false)}>{t("Cancel")}</Button>
+                    <Button type="submit" disabled={addInteractionMutation.isPending || updateInteractionMutation.isPending}>
+                      {addInteractionMutation.isPending || updateInteractionMutation.isPending ? t("Saving...") : t("Save")}
+                    </Button>
+                  </div>
+                </form>
+              </DialogContent>
+            </Dialog>
+
+            <Dialog open={isTaskDialogOpen} onOpenChange={setIsTaskDialogOpen}>
+              <DialogTrigger asChild>
+                <Button size="sm">
+                  <CheckSquare className="w-4 h-4 mr-2" />
+                  Add Task
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-md">
+                <DialogHeader>
+                  <DialogTitle>{t("Add CRM Follow-up Task")}</DialogTitle>
+                </DialogHeader>
+                <form onSubmit={crmTaskForm.handleSubmit((data) => addTaskMutation.mutate(data))} className="space-y-4">
+                  <div>
+                    <label className="text-xs font-semibold uppercase tracking-wider block mb-1">{t("Due Date")}</label>
+                    <Input
+                      type="date"
+                      name={crmTaskForm.register("dueDate").name}
+                      onChange={crmTaskForm.register("dueDate").onChange}
+                      onBlur={crmTaskForm.register("dueDate").onBlur}
+                      ref={crmTaskForm.register("dueDate").ref}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold uppercase tracking-wider block mb-1">{t("Task Priority")}</label>
+                    <select
+                      className="w-full h-10 border rounded-md px-3 bg-background"
+                      name={crmTaskForm.register("priority").name}
+                      onChange={crmTaskForm.register("priority").onChange}
+                      onBlur={crmTaskForm.register("priority").onBlur}
+                      ref={crmTaskForm.register("priority").ref}
+                    >
+                      <option value="Low">{t("Low")}</option>
+                      <option value="Medium">{t("Medium")}</option>
+                      <option value="High">{t("High")}</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold uppercase tracking-wider block mb-1">{t("Task Description")}</label>
+                    <Textarea
+                      placeholder={t("e.g., call patient to check recovery post chemical peel...")}
+                      className="min-h-[80px]"
+                      name={crmTaskForm.register("description").name}
+                      onChange={crmTaskForm.register("description").onChange}
+                      onBlur={crmTaskForm.register("description").onBlur}
+                      ref={crmTaskForm.register("description").ref}
+                      required
+                    />
+                  </div>
+                  <div className="flex justify-end gap-3 pt-2">
+                    <Button type="button" variant="outline" onClick={() => setIsTaskDialogOpen(false)}>{t("Cancel")}</Button>
+                    <Button type="submit" disabled={addTaskMutation.isPending}>
+                      {addTaskMutation.isPending ? t("Creating...") : t("Create Task")}
+                    </Button>
+                  </div>
+                </form>
+              </DialogContent>
+            </Dialog>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {crmInteractions.length === 0 ? (
+            <div className="text-center py-8">
+              <MessageSquare className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
+              <p className="text-muted-foreground">No interactions logged yet</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {crmInteractions.map((interaction) => (
+                <div key={interaction.id} className="p-4 rounded-lg border bg-card relative hover-elevate">
+                  <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline" className="bg-primary/5 text-primary border-primary/20">
+                        {interaction.type}
+                      </Badge>
+                      <Badge variant="secondary" className="text-xs font-normal">
+                        {interaction.channel}
+                      </Badge>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
+                        onClick={() => {
+                          setEditingInteraction(interaction);
+                          crmForm.reset({
+                            date: interaction.date,
+                            type: interaction.type,
+                            channel: interaction.channel,
+                            notes: interaction.notes,
+                            outcome: interaction.outcome || "",
+                            nextCallingDate: "",
+                          });
+                          setIsCRMDialogOpen(true);
+                        }}
+                        title={t("Edit Log")}
+                      >
+                        <Pencil className="w-3 h-3" />
+                      </Button>
+                    </div>
+                    <span className="text-xs text-muted-foreground font-medium">
+                      {format(new Date(interaction.date), "dd MMM yyyy")}
+                    </span>
+                  </div>
+                  <p className="text-sm font-normal text-foreground mb-1">
+                    {interaction.notes}
+                  </p>
+                  {interaction.outcome && (
+                    <div className="text-xs text-muted-foreground mt-2 border-t pt-2 flex items-center gap-1.5">
+                      <span className="font-semibold">Outcome:</span>
+                      <span>{interaction.outcome}</span>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+      </div>
+      </div>
     </div>
   );
 }

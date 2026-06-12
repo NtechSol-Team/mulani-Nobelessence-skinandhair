@@ -70,16 +70,54 @@ import { apiRequest } from "@/lib/queryClient";
 import { format } from "date-fns";
 import { z } from "zod";
 
-const appointmentFormSchema = insertAppointmentSchema;
+const appointmentFormSchema = z.object({
+    isNewPatient: z.boolean().default(false),
+    patientId: z.string().optional(),
+    newPatientName: z.string().optional(),
+    newPatientPhone: z.string().optional(),
+    date: z.string(),
+    time: z.string().default("09:00"),
+    reason: z.string().optional().default(""),
+    status: z.enum(["Scheduled", "Completed", "Cancelled"]).default("Scheduled"),
+}).superRefine((data, ctx) => {
+    if (data.isNewPatient) {
+        if (!data.newPatientName || data.newPatientName.trim().length === 0) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: "Patient Name is required",
+                path: ["newPatientName"],
+            });
+        }
+        if (!data.newPatientPhone || !/^\d{10}$/.test(data.newPatientPhone)) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: "Phone number must be exactly 10 digits",
+                path: ["newPatientPhone"],
+            });
+        }
+    } else {
+        if (!data.patientId || data.patientId.trim().length === 0) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: "Patient selection is required",
+                path: ["patientId"],
+            });
+        }
+    }
+});
+
 type AppointmentForm = z.infer<typeof appointmentFormSchema>;
 
 export default function AppointmentMaster() {
     const { toast } = useToast();
     const queryClient = useQueryClient();
     const [searchQuery, setSearchQuery] = useState("");
+    const [selectedDate, setSelectedDate] = useState("");
+    const [dateFilter, setDateFilter] = useState<"today" | "tomorrow" | "all" | "custom">("today");
     const [isDialogOpen, setIsDialogOpen] = useState(false);
     const [editingAppointment, setEditingAppointment] = useState<Appointment | null>(null);
     const [deletingAppointment, setDeletingAppointment] = useState<Appointment | null>(null);
+    const [isSubmitting, setIsSubmitting] = useState(false);
 
     const { data: appointmentsResponse, isLoading } = useQuery({
         queryKey: ["/api/appointments"],
@@ -92,10 +130,13 @@ export default function AppointmentMaster() {
     });
     const patients = extractPaginatedData<Patient>(patientsResponse);
 
-    const form = useForm<AppointmentForm>({
+    const form = useForm<any>({
         resolver: zodResolver(appointmentFormSchema),
         defaultValues: {
+            isNewPatient: false,
             patientId: "",
+            newPatientName: "",
+            newPatientPhone: "",
             date: format(new Date(), "yyyy-MM-dd"),
             time: "09:00",
             reason: "",
@@ -104,7 +145,7 @@ export default function AppointmentMaster() {
     });
 
     const createMutation = useMutation({
-        mutationFn: async (data: AppointmentForm) => {
+        mutationFn: async (data: any) => {
             return await apiRequest("POST", "/api/appointments", data);
         },
         onSuccess: () => {
@@ -125,7 +166,7 @@ export default function AppointmentMaster() {
     });
 
     const updateMutation = useMutation({
-        mutationFn: async ({ id, data }: { id: string; data: AppointmentForm }) => {
+        mutationFn: async ({ id, data }: { id: string; data: any }) => {
             return await apiRequest("PATCH", `/api/appointments/${id}`, data);
         },
         onSuccess: () => {
@@ -170,7 +211,10 @@ export default function AppointmentMaster() {
         setIsDialogOpen(false);
         setEditingAppointment(null);
         form.reset({
+            isNewPatient: false,
             patientId: "",
+            newPatientName: "",
+            newPatientPhone: "",
             date: format(new Date(), "yyyy-MM-dd"),
             time: "09:00",
             reason: "",
@@ -181,7 +225,10 @@ export default function AppointmentMaster() {
     const openEditDialog = (appointment: Appointment) => {
         setEditingAppointment(appointment);
         form.reset({
+            isNewPatient: false,
             patientId: appointment.patientId,
+            newPatientName: "",
+            newPatientPhone: "",
             date: appointment.date,
             time: appointment.time,
             reason: appointment.reason,
@@ -190,35 +237,118 @@ export default function AppointmentMaster() {
         setIsDialogOpen(true);
     };
 
-    const onSubmit = (data: AppointmentForm) => {
-        // If we're creating a new appointment, valid patient is required
-        if (!editingAppointment && !patients.find(p => p.id === data.patientId)) {
+    const onSubmit = async (data: AppointmentForm) => {
+        try {
+            setIsSubmitting(true);
+            let patientIdToUse = data.patientId;
+
+            if (data.isNewPatient && !editingAppointment) {
+                // Register new patient
+                const patientData = {
+                    name: data.newPatientName!,
+                    phone: data.newPatientPhone!,
+                    registrationDate: format(new Date(), "yyyy-MM-dd"),
+                    dob: "",
+                    status: "Active" as const,
+                    source: "Walk-in" as const,
+                };
+                const response = await apiRequest("POST", "/api/patients", patientData);
+                const newPatient = await response.json();
+                patientIdToUse = newPatient.id;
+
+                queryClient.invalidateQueries({ queryKey: ["/api/patients"] });
+            }
+
+            const appointmentData = {
+                patientId: patientIdToUse!,
+                date: data.date,
+                time: data.time,
+                reason: data.reason,
+                status: data.status,
+            };
+
+            if (editingAppointment) {
+                await updateMutation.mutateAsync({ id: editingAppointment.id, data: appointmentData }).catch(() => {});
+            } else {
+                await createMutation.mutateAsync(appointmentData).catch(() => {});
+            }
+        } catch (error: any) {
             toast({
-                title: "Invalid Patient",
-                description: "Please select a valid patient from the list.",
+                title: "Error Scheduling Appointment",
+                description: error.message || "An error occurred",
                 variant: "destructive",
             });
-            return;
-        }
-
-        if (editingAppointment) {
-            updateMutation.mutate({ id: editingAppointment.id, data });
-        } else {
-            createMutation.mutate(data);
+        } finally {
+            setIsSubmitting(false);
         }
     };
 
     const filteredAppointments = appointments.filter((appt: Appointment) => {
         const patientName = appt.patientName || patients.find(p => p.id === appt.patientId)?.name || "";
-        return (
+        const matchesSearch =
             patientName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            appt.reason.toLowerCase().includes(searchQuery.toLowerCase())
-        );
+            appt.reason.toLowerCase().includes(searchQuery.toLowerCase());
+        
+        const todayStr = format(new Date(), "yyyy-MM-dd");
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        const tomorrowStr = format(tomorrow, "yyyy-MM-dd");
+
+        let matchesDate = true;
+        if (dateFilter === "today") {
+            matchesDate = appt.date === todayStr;
+        } else if (dateFilter === "tomorrow") {
+            matchesDate = appt.date === tomorrowStr;
+        } else if (dateFilter === "custom") {
+            matchesDate = !selectedDate || appt.date === selectedDate;
+        } // if dateFilter is "all", matchesDate is true
+
+        return matchesSearch && matchesDate;
     });
 
-    // Split appointments into Upcoming and History
-    const upcomingAppointments = filteredAppointments.filter(a => a.isUpcoming);
-    const pastAppointments = filteredAppointments.filter(a => !a.isUpcoming);
+    const todaysAppointments = appointments.filter(a => a.date === format(new Date(), "yyyy-MM-dd"));
+
+    // Split and sort appointments chronologically / reverse-chronologically
+    const upcomingAppointments = filteredAppointments
+        .filter(a => a.isUpcoming)
+        .sort((a, b) => {
+            const dateDiff = new Date(a.date).getTime() - new Date(b.date).getTime();
+            if (dateDiff !== 0) return dateDiff;
+            return a.time.localeCompare(b.time);
+        });
+
+    const pastAppointments = filteredAppointments
+        .filter(a => !a.isUpcoming)
+        .sort((a, b) => {
+            const dateDiff = new Date(b.date).getTime() - new Date(a.date).getTime();
+            if (dateDiff !== 0) return dateDiff;
+            return b.time.localeCompare(a.time);
+        });
+
+    // Helper to format date headers nicely
+    const formatDateHeader = (dateStr: string) => {
+        const todayStr = format(new Date(), "yyyy-MM-dd");
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        const tomorrowStr = format(tomorrow, "yyyy-MM-dd");
+
+        if (dateStr === todayStr) {
+            return `Today - ${format(new Date(dateStr), "EEEE, dd MMM yyyy")}`;
+        } else if (dateStr === tomorrowStr) {
+            return `Tomorrow - ${format(new Date(dateStr), "EEEE, dd MMM yyyy")}`;
+        }
+        return format(new Date(dateStr), "EEEE, dd MMM yyyy");
+    };
+
+    // Group upcoming appointments by date for chronological display
+    const groupedUpcoming = upcomingAppointments.reduce((groups: Record<string, Appointment[]>, appt) => {
+        const dateKey = appt.date;
+        if (!groups[dateKey]) {
+            groups[dateKey] = [];
+        }
+        groups[dateKey].push(appt);
+        return groups;
+    }, {});
 
     const sendWhatsApp = (appt: Appointment) => {
         const patient = patients.find(p => p.id === appt.patientId);
@@ -294,36 +424,89 @@ Primecare Skin & Health`;
                     <CardTitle className="text-lg font-medium flex items-center justify-between">
                         <div className="flex items-center gap-2">
                             <CalendarIcon className="w-5 h-5 text-blue-600" />
-                            Today's Appointments ({appointments.filter(a => a.date === format(new Date(), "yyyy-MM-dd")).length})
+                            Today's Appointments ({todaysAppointments.length})
                         </div>
-                        <Badge variant={appointments.filter(a => a.date === format(new Date(), "yyyy-MM-dd")).length > 0 ? "default" : "secondary"}>
-                            {appointments.filter(a => a.date === format(new Date(), "yyyy-MM-dd")).length > 0 ? "Action Required" : "No Appointments"}
+                        <Badge variant={todaysAppointments.length > 0 ? "default" : "secondary"}>
+                            {todaysAppointments.length > 0 ? "Action Required" : "No Appointments"}
                         </Badge>
                     </CardTitle>
                 </CardHeader>
                 <CardContent className="pt-4">
-                    {appointments.filter(a => a.date === format(new Date(), "yyyy-MM-dd")).length === 0 ? (
+                    {todaysAppointments.length === 0 ? (
                         <div className="text-center py-4 text-muted-foreground">
                             No appointments scheduled for today.
                         </div>
                     ) : (
                         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                            {appointments.filter(a => a.date === format(new Date(), "yyyy-MM-dd")).map((appt) => (
-                                <div key={appt.id} className="p-3 border rounded-md bg-card flex flex-col gap-2 shadow-sm">
-                                    <div className="flex justify-between items-start">
-                                        <div className="font-medium">
-                                            {appt.patientName || patients.find(p => p.id === appt.patientId)?.name || "Unknown Patient"}
-                                        </div>
-                                        <div className="text-xs text-muted-foreground">
-                                            {appt.time}
+                            {todaysAppointments.map((appt) => (
+                                <div key={appt.id} className="p-3 border rounded-md bg-card flex flex-col gap-3 shadow-sm hover:border-blue-200 transition-colors">
+                                    <div className="flex justify-between items-start gap-2">
+                                        <div className="flex items-start gap-2.5">
+                                            {/* Tickbox to complete */}
+                                            <div className="pt-0.5">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={appt.status === "Completed"}
+                                                    disabled={appt.status === "Completed" || updateMutation.isPending}
+                                                    onChange={async (e) => {
+                                                        if (e.target.checked) {
+                                                            const appointmentData = {
+                                                                patientId: appt.patientId,
+                                                                date: appt.date,
+                                                                time: appt.time,
+                                                                reason: appt.reason,
+                                                                status: "Completed",
+                                                            };
+                                                            await updateMutation.mutateAsync({ id: appt.id, data: appointmentData }).catch(() => {});
+                                                        }
+                                                    }}
+                                                    className="h-4.5 w-4.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer disabled:cursor-not-allowed"
+                                                />
+                                            </div>
+                                            <div>
+                                                <div className={`font-medium ${appt.status === "Completed" ? "line-through text-muted-foreground" : ""}`}>
+                                                    {appt.patientName || patients.find(p => p.id === appt.patientId)?.name || "Unknown Patient"}
+                                                </div>
+                                                <div className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
+                                                    <Clock className="w-3 h-3 text-muted-foreground" />
+                                                    {appt.time}
+                                                </div>
+                                            </div>
                                         </div>
                                         <Badge variant="outline" className={
-                                            appt.status === "Scheduled" ? "bg-blue-50 text-blue-700" :
-                                                appt.status === "Completed" ? "bg-green-50 text-green-700" : "bg-gray-100"
+                                            appt.status === "Scheduled" ? "bg-blue-50 text-blue-700 border-blue-200" :
+                                                appt.status === "Completed" ? "bg-green-50 text-green-700 border-green-200" : "bg-gray-100"
                                         }>{appt.status}</Badge>
                                     </div>
-                                    <div className="text-sm text-muted-foreground truncate" title={appt.reason}>
-                                        {appt.reason}
+                                    
+                                    {appt.reason && (
+                                        <div className="text-xs text-muted-foreground bg-muted/30 p-2 rounded" title={appt.reason}>
+                                            <span className="font-semibold text-foreground/70 mr-1">Reason:</span>
+                                            {appt.reason}
+                                        </div>
+                                    )}
+
+                                    {/* Action Buttons: Reschedule & Edit */}
+                                    <div className="flex gap-2 justify-end pt-1 border-t border-border/40">
+                                        {appt.status !== "Completed" && (
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                className="h-7 text-xs px-2 flex items-center gap-1 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200"
+                                                onClick={() => openEditDialog(appt)}
+                                            >
+                                                <Clock className="w-3 h-3" />
+                                                Reschedule
+                                            </Button>
+                                        )}
+                                        <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            className="h-7 text-xs px-2 text-muted-foreground hover:text-foreground"
+                                            onClick={() => openEditDialog(appt)}
+                                        >
+                                            Edit Details
+                                        </Button>
                                     </div>
                                 </div>
                             ))}
@@ -339,7 +522,7 @@ Primecare Skin & Health`;
                             <CalendarIcon className="w-5 h-5 text-primary" />
                             All Appointments
                         </CardTitle>
-                        <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-3 flex-wrap">
                             <div className="relative w-full sm:w-64">
                                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                                 <Input
@@ -350,6 +533,65 @@ Primecare Skin & Health`;
                                     className="pl-9"
                                 />
                             </div>
+                            <div className="flex border rounded-md p-0.5 bg-muted items-center">
+                                <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    type="button"
+                                    onClick={() => setDateFilter("today")}
+                                    className={`h-8 px-3 text-xs ${dateFilter === "today" ? "bg-background text-foreground shadow-sm hover:bg-background" : "text-muted-foreground"}`}
+                                >
+                                    Today
+                                </Button>
+                                <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    type="button"
+                                    onClick={() => setDateFilter("tomorrow")}
+                                    className={`h-8 px-3 text-xs ${dateFilter === "tomorrow" ? "bg-background text-foreground shadow-sm hover:bg-background" : "text-muted-foreground"}`}
+                                >
+                                    Tomorrow
+                                </Button>
+                                <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    type="button"
+                                    onClick={() => setDateFilter("all")}
+                                    className={`h-8 px-3 text-xs ${dateFilter === "all" ? "bg-background text-foreground shadow-sm hover:bg-background" : "text-muted-foreground"}`}
+                                >
+                                    All
+                                </Button>
+                                <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    type="button"
+                                    onClick={() => setDateFilter("custom")}
+                                    className={`h-8 px-3 text-xs ${dateFilter === "custom" ? "bg-background text-foreground shadow-sm hover:bg-background" : "text-muted-foreground"}`}
+                                >
+                                    Custom Date
+                                </Button>
+                            </div>
+                            {dateFilter === "custom" && (
+                                <div className="flex items-center gap-2">
+                                    <Input
+                                        type="date"
+                                        value={selectedDate}
+                                        onChange={(e) => setSelectedDate(e.target.value)}
+                                        className="w-40 h-10 border rounded px-3"
+                                        title="Filter by Specific Date"
+                                    />
+                                    {selectedDate && (
+                                        <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            onClick={() => setSelectedDate("")}
+                                            className="h-10 px-2 text-xs"
+                                        >
+                                            Clear Date
+                                        </Button>
+                                    )}
+                                </div>
+                            )}
                             <Dialog open={isDialogOpen} onOpenChange={(open) => !open && closeDialog()}>
                                 <DialogTrigger asChild>
                                     <Button onClick={() => setIsDialogOpen(true)}>
@@ -357,7 +599,7 @@ Primecare Skin & Health`;
                                         New Appointment
                                     </Button>
                                 </DialogTrigger>
-                                <DialogContent>
+                                <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-md">
                                     <DialogHeader>
                                         <DialogTitle>
                                             {editingAppointment ? "Edit Appointment" : "Schedule New Appointment"}
@@ -366,34 +608,99 @@ Primecare Skin & Health`;
                                     <Form {...form}>
                                         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
 
-                                            <FormField
-                                                control={form.control}
-                                                name="patientId"
-                                                render={({ field }) => (
-                                                    <FormItem>
-                                                        <FormLabel>Patient</FormLabel>
-                                                        <Select
-                                                            onValueChange={field.onChange}
-                                                            defaultValue={field.value}
-                                                            disabled={!!editingAppointment} // Disable changing patient on edit
-                                                        >
-                                                            <FormControl>
-                                                                <SelectTrigger>
-                                                                    <SelectValue placeholder={patientsLoading ? "Loading..." : "Select Patient"} />
-                                                                </SelectTrigger>
-                                                            </FormControl>
-                                                            <SelectContent>
-                                                                {patients.map((patient) => (
-                                                                    <SelectItem key={patient.id} value={patient.id}>
-                                                                        {patient.name} ({patient.phone})
-                                                                    </SelectItem>
-                                                                ))}
-                                                            </SelectContent>
-                                                        </Select>
-                                                        <FormMessage />
-                                                    </FormItem>
-                                                )}
-                                            />
+                                            {/* Patient Type toggle */}
+                                            {!editingAppointment && (
+                                                <div className="flex items-center gap-6 p-3 bg-muted/40 border border-border/60 rounded-md mb-2">
+                                                    <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Patient type:</label>
+                                                    <div className="flex items-center gap-4">
+                                                        <label className="flex items-center gap-1.5 text-sm font-medium cursor-pointer">
+                                                            <input
+                                                                type="radio"
+                                                                checked={!form.watch("isNewPatient")}
+                                                                onChange={() => {
+                                                                    form.setValue("isNewPatient", false);
+                                                                    form.clearErrors(["newPatientName", "newPatientPhone", "patientId"]);
+                                                                }}
+                                                                className="h-4 w-4 text-primary accent-primary"
+                                                            />
+                                                            Existing Patient
+                                                        </label>
+                                                        <label className="flex items-center gap-1.5 text-sm font-medium cursor-pointer">
+                                                            <input
+                                                                type="radio"
+                                                                checked={form.watch("isNewPatient")}
+                                                                onChange={() => {
+                                                                    form.setValue("isNewPatient", true);
+                                                                    form.clearErrors(["newPatientName", "newPatientPhone", "patientId"]);
+                                                                }}
+                                                                className="h-4 w-4 text-primary accent-primary"
+                                                            />
+                                                            New Patient
+                                                        </label>
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {!form.watch("isNewPatient") ? (
+                                                <FormField
+                                                    control={form.control}
+                                                    name="patientId"
+                                                    render={({ field }) => (
+                                                        <FormItem>
+                                                            <FormLabel>Patient</FormLabel>
+                                                            <Select
+                                                                onValueChange={field.onChange}
+                                                                value={field.value}
+                                                                disabled={!!editingAppointment} // Disable changing patient on edit
+                                                            >
+                                                                <FormControl>
+                                                                    <SelectTrigger>
+                                                                        <SelectValue placeholder={patientsLoading ? "Loading..." : "Select Patient"} />
+                                                                    </SelectTrigger>
+                                                                </FormControl>
+                                                                <SelectContent>
+                                                                    {patients.map((patient) => (
+                                                                        <SelectItem key={patient.id} value={patient.id}>
+                                                                            {patient.name} ({patient.phone})
+                                                                        </SelectItem>
+                                                                    ))}
+                                                                </SelectContent>
+                                                            </Select>
+                                                            <FormMessage />
+                                                        </FormItem>
+                                                    )}
+                                                />
+                                            ) : (
+                                                <div className="space-y-4 p-4 border border-blue-100 bg-blue-50/20 rounded-md">
+                                                    <h3 className="text-xs font-semibold text-blue-700 uppercase tracking-wider">New Patient Registration</h3>
+                                                    <FormField
+                                                        control={form.control}
+                                                        name="newPatientName"
+                                                        render={({ field }) => (
+                                                            <FormItem>
+                                                                <FormLabel>Patient Full Name</FormLabel>
+                                                                <FormControl>
+                                                                    <Input placeholder="Enter full name" {...field} />
+                                                                </FormControl>
+                                                                <FormMessage />
+                                                            </FormItem>
+                                                        )}
+                                                    />
+                                                    <FormField
+                                                        control={form.control}
+                                                        name="newPatientPhone"
+                                                        render={({ field }) => (
+                                                            <FormItem>
+                                                                <FormLabel>Phone Number</FormLabel>
+                                                                <FormControl>
+                                                                    <Input placeholder="10-digit mobile number" {...field} />
+                                                                </FormControl>
+                                                                <FormMessage />
+                                                            </FormItem>
+                                                        )}
+                                                    />
+                                                </div>
+                                            )}
 
                                             <FormField
                                                 control={form.control}
@@ -478,9 +785,9 @@ Primecare Skin & Health`;
                                                 </Button>
                                                 <Button
                                                     type="submit"
-                                                    disabled={createMutation.isPending || updateMutation.isPending}
+                                                    disabled={isSubmitting || createMutation.isPending || updateMutation.isPending}
                                                 >
-                                                    {createMutation.isPending || updateMutation.isPending
+                                                    {isSubmitting || createMutation.isPending || updateMutation.isPending
                                                         ? "Saving..."
                                                         : editingAppointment
                                                             ? "Update"
@@ -518,14 +825,24 @@ Primecare Skin & Health`;
                                         </p>
                                     </div>
                                 ) : (
-                                    <AppointmentsTable
-                                        appointments={upcomingAppointments}
-                                        patients={patients}
-                                        getStatusBadge={getStatusBadge}
-                                        onEdit={openEditDialog}
-                                        onDelete={setDeletingAppointment}
-                                        onWhatsApp={sendWhatsApp}
-                                    />
+                                    <div className="space-y-6">
+                                        {Object.entries(groupedUpcoming).sort((a, b) => new Date(a[0]).getTime() - new Date(b[0]).getTime()).map(([dateStr, appts]) => (
+                                            <div key={dateStr} className="space-y-2">
+                                                <div className="text-xs font-semibold text-primary bg-primary/5 border border-primary/10 px-3 py-1.5 rounded flex items-center gap-2 w-fit">
+                                                    <CalendarIcon className="w-3.5 h-3.5" />
+                                                    {formatDateHeader(dateStr)}
+                                                </div>
+                                                <AppointmentsTable
+                                                    appointments={appts}
+                                                    patients={patients}
+                                                    getStatusBadge={getStatusBadge}
+                                                    onEdit={openEditDialog}
+                                                    onDelete={setDeletingAppointment}
+                                                    onWhatsApp={sendWhatsApp}
+                                                />
+                                            </div>
+                                        ))}
+                                    </div>
                                 )}
                             </TabsContent>
 
