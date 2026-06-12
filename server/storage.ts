@@ -123,6 +123,7 @@ export interface IStorage {
   createCRMTask(task: InsertCRMTask): Promise<CRMTask>;
   updateCRMTaskStatus(id: string, status: "Pending" | "Completed"): Promise<CRMTask | undefined>;
   deleteCRMTask(id: string): Promise<boolean>;
+  ping(): Promise<boolean>;
 
   // Users/Auth
   // Authentication removed
@@ -2224,6 +2225,12 @@ export class PostgresStorage implements IStorage {
     const dbId = this.convertId("crm_tasks", id);
     const result = await pool.query("DELETE FROM crm_tasks WHERE id = $1", [dbId]);
     return (result.rowCount ?? 0) > 0;
+  }
+
+  async ping(): Promise<boolean> {
+    await this.waitForReady();
+    await pool.query("SELECT 1");
+    return true;
   }
 
   // Users/Auth

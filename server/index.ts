@@ -6,6 +6,7 @@ import { serveStatic } from "./static";
 import { createServer } from "http";
 import helmet from "helmet";
 import { setupAuth } from "./auth";
+import { setupCronJob } from "./cron";
 
 const app = express();
 
@@ -129,6 +130,7 @@ app.use((req, res, next) => {
     const port = parseInt(process.env.PORT || "5050", 10);
     httpServer.listen(port, "0.0.0.0", () => {
       log(`serving on port ${port}`);
+      setupCronJob();
     });
   } catch (error) {
     console.error("Failed to start server:", error);

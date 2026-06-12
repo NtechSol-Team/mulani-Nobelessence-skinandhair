@@ -33,6 +33,16 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  // Public health check endpoint for keep-alive/pings
+  app.get("/api/health", async (req, res) => {
+    try {
+      await storage.ping();
+      res.json({ status: "ok", timestamp: new Date().toISOString() });
+    } catch (error) {
+      res.status(500).json({ status: "error", error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
   // Protect all API routes registered below
   // Note: /api/login and /api/logout are registered in setupAuth() before this function
   app.use("/api", ensureAuthenticated);
