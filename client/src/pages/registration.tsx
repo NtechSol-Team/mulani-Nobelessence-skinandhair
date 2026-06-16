@@ -24,7 +24,6 @@ import { z } from "zod";
 
 const registrationSchema = insertPatientSchema.extend({
   complaints: z.string().optional().default(""),
-  diagnosis: z.string().optional().default(""),
 });
 
 type RegistrationForm = z.infer<typeof registrationSchema>;
@@ -57,7 +56,6 @@ export default function Registration() {
       phone: initPhone,
       registrationDate: format(new Date(), "yyyy-MM-dd"),
       complaints: "",
-      diagnosis: "",
       dob: "",
       status: "Active",
       source: initSource,
@@ -72,7 +70,6 @@ export default function Registration() {
         phone: initPhone,
         registrationDate: format(new Date(), "yyyy-MM-dd"),
         complaints: "",
-        diagnosis: "",
         dob: "",
         status: "Active",
         source: initSource,
@@ -100,7 +97,7 @@ export default function Registration() {
         patientId: patient.id,
         date: data.registrationDate,
         complaints: data.complaints,
-        diagnosis: data.diagnosis,
+        diagnosis: "",
       });
 
       if (leadId && lead) {
@@ -331,27 +328,7 @@ export default function Registration() {
                     )}
                   />
 
-                  <FormField
-                    control={form.control}
-                    name="diagnosis"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel className="flex items-center gap-2">
-                          <Stethoscope className="w-4 h-4" />
-                          Diagnosis
-                        </FormLabel>
-                        <FormControl>
-                          <Textarea
-                            placeholder="Enter diagnosis..."
-                            className="min-h-[100px] resize-none"
-                            {...field}
-                            data-testid="input-diagnosis"
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                  {/* Diagnosis field removed from new patient registration */}
                 </div>
               </div>
 

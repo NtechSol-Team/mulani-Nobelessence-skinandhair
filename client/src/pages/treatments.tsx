@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useForm } from "react-hook-form";
+import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
   Stethoscope,
@@ -20,6 +20,13 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Form,
   FormControl,
@@ -47,7 +54,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
-import type { Treatment } from "@shared/schema";
+import type { Treatment, Medicine } from "@shared/schema";
+import { Badge } from "@/components/ui/badge";
 import { extractPaginatedData } from "@/lib/utils";
 import { insertTreatmentSchema } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
@@ -64,18 +72,29 @@ export default function Treatments() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingTreatment, setEditingTreatment] = useState<Treatment | null>(null);
   const [deletingTreatment, setDeletingTreatment] = useState<Treatment | null>(null);
-
   const { data: treatmentsResponse, isLoading } = useQuery({
     queryKey: ["/api/treatments"],
   });
   const treatments = extractPaginatedData<Treatment>(treatmentsResponse);
+
+  const { data: medicinesResponse } = useQuery({
+    queryKey: ["/api/medicines"],
+  });
+  const medicines = extractPaginatedData<Medicine>(medicinesResponse);
 
   const form = useForm<TreatmentForm>({
     resolver: zodResolver(treatmentFormSchema),
     defaultValues: {
       name: "",
       defaultPrice: 0,
+      type: "General",
+      equipments: [],
     },
+  });
+
+  const { fields: equipmentFields, append: appendEquipment, remove: removeEquipment } = useFieldArray({
+    control: form.control,
+    name: "equipments",
   });
 
   const createMutation = useMutation({
@@ -147,6 +166,8 @@ export default function Treatments() {
     form.reset({
       name: "",
       defaultPrice: 0,
+      type: "General",
+      equipments: [],
     });
   };
 
@@ -155,6 +176,8 @@ export default function Treatments() {
     form.reset({
       name: treatment.name,
       defaultPrice: treatment.defaultPrice,
+      type: treatment.type || "General",
+      equipments: treatment.equipments || [],
     });
     setIsDialogOpen(true);
   };
@@ -254,6 +277,100 @@ export default function Treatments() {
                         )}
                       />
 
+                      <FormField
+                        control={form.control}
+                        name="type"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Type</FormLabel>
+                            <Select
+                              onValueChange={field.onChange}
+                              value={field.value}
+                            >
+                              <FormControl>
+                                <SelectTrigger data-testid="select-treatment-type">
+                                  <SelectValue placeholder="Select type" />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                <SelectItem value="General">General Treatment</SelectItem>
+                                <SelectItem value="Surgery">Surgery / PRP / Transplant</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      {form.watch("type") === "Surgery" && (
+                        <div className="border rounded-lg p-4 bg-muted/30 space-y-4">
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm font-semibold">Surgery Equipment</span>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => appendEquipment({ medicineId: "", quantity: 1 })}
+                            >
+                              <Plus className="w-4 h-4 mr-1" />
+                              Add Item
+                            </Button>
+                          </div>
+
+                          {equipmentFields.length === 0 ? (
+                            <p className="text-xs text-muted-foreground text-center py-2">
+                              No associated equipment configured.
+                            </p>
+                          ) : (
+                            <div className="max-h-48 overflow-y-auto space-y-3 pr-1">
+                              {equipmentFields.map((field, index) => (
+                                <div key={field.id} className="flex gap-2 items-end">
+                                  <div className="flex-1">
+                                    <label className="text-xs text-muted-foreground">Select Equipment</label>
+                                    <Select
+                                      onValueChange={(val) => form.setValue(`equipments.${index}.medicineId`, val)}
+                                      value={form.watch(`equipments.${index}.medicineId`)}
+                                    >
+                                      <SelectTrigger>
+                                        <SelectValue placeholder="Select item" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        {medicines
+                                          .filter((m) => m.type === "Equipment")
+                                          .map((m) => (
+                                            <SelectItem key={m.id} value={m.id}>
+                                              {m.name} (Stock: {m.quantity})
+                                            </SelectItem>
+                                          ))}
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+                                  <div className="w-20">
+                                    <label className="text-xs text-muted-foreground">Qty</label>
+                                    <Input
+                                      type="number"
+                                      min="1"
+                                      {...form.register(`equipments.${index}.quantity` as const, { valueAsNumber: true })}
+                                      className="h-9"
+                                    />
+                                  </div>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    className="text-destructive h-9 w-9"
+                                    onClick={() => removeEquipment(index)}
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </Button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+
                       <div className="flex justify-end gap-3 pt-2">
                         <Button type="button" variant="outline" onClick={closeDialog}>
                           Cancel
@@ -300,6 +417,8 @@ export default function Treatments() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Treatment Name</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead>Equipment Count</TableHead>
                     <TableHead className="text-right">Default Price</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
@@ -308,6 +427,20 @@ export default function Treatments() {
                   {filteredTreatments.map((treatment) => (
                     <TableRow key={treatment.id} data-testid={`row-treatment-${treatment.id}`}>
                       <TableCell className="font-medium">{treatment.name}</TableCell>
+                      <TableCell>
+                        <Badge variant={treatment.type === "Surgery" ? "outline" : "secondary"}>
+                          {treatment.type === "Surgery" ? "Surgery" : "General"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        {treatment.type === "Surgery" && treatment.equipments && treatment.equipments.length > 0 ? (
+                          <span className="text-sm font-medium">
+                            {treatment.equipments.length} item(s)
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground text-sm">-</span>
+                        )}
+                      </TableCell>
                       <TableCell className="text-right">
                         ₹{treatment.defaultPrice.toFixed(2)}
                       </TableCell>

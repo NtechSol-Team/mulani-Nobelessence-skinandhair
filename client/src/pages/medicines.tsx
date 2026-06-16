@@ -24,6 +24,13 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Form,
   FormControl,
   FormField,
@@ -80,6 +87,8 @@ export default function Medicines() {
       purchaseCost: 0,
       sellingPrice: 0,
       quantity: 0,
+      type: "Medicine",
+      vendorName: "",
     },
   });
 
@@ -154,6 +163,8 @@ export default function Medicines() {
       purchaseCost: 0,
       sellingPrice: 0,
       quantity: 0,
+      type: "Medicine",
+      vendorName: "",
     });
   };
 
@@ -164,6 +175,8 @@ export default function Medicines() {
       purchaseCost: medicine.purchaseCost,
       sellingPrice: medicine.sellingPrice,
       quantity: medicine.quantity,
+      type: medicine.type || "Medicine",
+      vendorName: medicine.vendorName || "",
     });
     setIsDialogOpen(true);
   };
@@ -341,6 +354,49 @@ export default function Medicines() {
 
                       <FormField
                         control={form.control}
+                        name="type"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Type</FormLabel>
+                            <Select
+                              onValueChange={field.onChange}
+                              value={field.value}
+                            >
+                              <FormControl>
+                                <SelectTrigger data-testid="select-medicine-type">
+                                  <SelectValue placeholder="Select type" />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                <SelectItem value="Medicine">Medicine</SelectItem>
+                                <SelectItem value="Equipment">Surgery Equipment</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="vendorName"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Vendor Name</FormLabel>
+                            <FormControl>
+                              <Input
+                                placeholder="Enter vendor name"
+                                {...field}
+                                data-testid="input-vendor-name"
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
                         name="quantity"
                         render={({ field }) => (
                           <FormItem>
@@ -405,6 +461,8 @@ export default function Medicines() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Medicine Name</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead>Vendor</TableHead>
                     <TableHead className="text-right">Purchase Cost</TableHead>
                     <TableHead className="text-right">Selling Price</TableHead>
                     <TableHead className="text-right">Margin</TableHead>
@@ -422,6 +480,12 @@ export default function Medicines() {
                     return (
                       <TableRow key={medicine.id} data-testid={`row-medicine-${medicine.id}`}>
                         <TableCell className="font-medium">{medicine.name}</TableCell>
+                        <TableCell>
+                          <Badge variant={medicine.type === "Equipment" ? "outline" : "secondary"}>
+                            {medicine.type === "Equipment" ? "Surgery Equipment" : "Medicine"}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">{medicine.vendorName || "—"}</TableCell>
                         <TableCell className="text-right">
                           ₹{medicine.purchaseCost.toFixed(2)}
                         </TableCell>

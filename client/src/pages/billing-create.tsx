@@ -437,7 +437,7 @@ export default function BillingCreate() {
                               <SelectValue placeholder="Select medicine" />
                             </SelectTrigger>
                             <SelectContent>
-                              {medicines.map((medicine) => (
+                              {medicines.filter((m) => m.type !== "Equipment").map((medicine) => (
                                 <SelectItem
                                   key={medicine.id}
                                   value={medicine.id}

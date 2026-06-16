@@ -193,12 +193,16 @@ type DbMedicineRow = {
   purchase_cost: number;
   selling_price: number;
   quantity: number;
+  type?: string;
+  vendor_name?: string;
 };
 
 type DbTreatmentRow = {
   id: string | number;
   name: string;
   default_price: number;
+  type?: string;
+  equipments?: any;
 };
 
 type DbBillRow = {
@@ -268,7 +272,9 @@ const createTableStatements = [
     name TEXT NOT NULL,
     purchase_cost DOUBLE PRECISION NOT NULL,
     selling_price DOUBLE PRECISION NOT NULL,
-    quantity INTEGER NOT NULL
+    quantity INTEGER NOT NULL,
+    type TEXT DEFAULT 'Medicine',
+    vendor_name TEXT DEFAULT ''
   )`,
   `CREATE TABLE IF NOT EXISTS treatments (
     id UUID PRIMARY KEY,
@@ -356,6 +362,16 @@ async function ensureTables(): Promise<void> {
   }
   // Migration for new time column
   await pool.query("ALTER TABLE appointments ADD COLUMN IF NOT EXISTS time TEXT DEFAULT ''");
+
+  // Migration for Medicine type
+  await pool.query("ALTER TABLE medicines ADD COLUMN IF NOT EXISTS type TEXT DEFAULT 'Medicine'");
+
+  // Migration for Medicine vendor_name
+  await pool.query("ALTER TABLE medicines ADD COLUMN IF NOT EXISTS vendor_name TEXT DEFAULT ''");
+
+  // Migration for Treatment type and equipments
+  await pool.query("ALTER TABLE treatments ADD COLUMN IF NOT EXISTS type TEXT DEFAULT 'General'");
+  await pool.query("ALTER TABLE treatments ADD COLUMN IF NOT EXISTS equipments JSONB DEFAULT '[]'::jsonb");
 
   // Migration for Patient CRM fields
   await pool.query("ALTER TABLE patients ADD COLUMN IF NOT EXISTS dob TEXT DEFAULT ''");
@@ -546,13 +562,27 @@ const mapMedicine = (row: DbMedicineRow): Medicine => ({
   purchaseCost: row.purchase_cost,
   sellingPrice: row.selling_price,
   quantity: row.quantity,
+  type: (row.type || "Medicine") as "Medicine" | "Equipment",
+  vendorName: row.vendor_name || "",
 });
 
-const mapTreatment = (row: DbTreatmentRow): Treatment => ({
-  id: normalizeId(row.id),
-  name: row.name,
-  defaultPrice: row.default_price,
-});
+const mapTreatment = (row: DbTreatmentRow): Treatment => {
+  let equipments = row.equipments ?? [];
+  if (typeof equipments === "string") {
+    try {
+      equipments = JSON.parse(equipments);
+    } catch (e) {
+      equipments = [];
+    }
+  }
+  return {
+    id: normalizeId(row.id),
+    name: row.name,
+    defaultPrice: row.default_price,
+    type: (row.type || "General") as "General" | "Surgery",
+    equipments: equipments as any[],
+  };
+};
 
 const mapBill = (row: DbBillRow): Bill => {
   // Parse medicines if it's a string (stored as JSON in DB)
@@ -1005,7 +1035,7 @@ export class PostgresStorage implements IStorage {
       return cached;
     }
     const { rows } = await pool.query<DbMedicineRow>(
-      "SELECT id, name, purchase_cost, selling_price, quantity FROM medicines ORDER BY name ASC"
+      "SELECT id, name, purchase_cost, selling_price, quantity, type, vendor_name FROM medicines ORDER BY name ASC"
     );
     const medicines = rows.map(mapMedicine);
     this.cache.set("medicines", medicines);
@@ -1022,7 +1052,7 @@ export class PostgresStorage implements IStorage {
     }
     const dbId = this.convertId("medicines", id);
     const { rows } = await pool.query<DbMedicineRow>(
-      "SELECT id, name, purchase_cost, selling_price, quantity FROM medicines WHERE id = $1",
+      "SELECT id, name, purchase_cost, selling_price, quantity, type, vendor_name FROM medicines WHERE id = $1",
       [dbId]
     );
     const medicine = rows[0] ? mapMedicine(rows[0]) : undefined;
@@ -1036,20 +1066,22 @@ export class PostgresStorage implements IStorage {
     await this.waitForReady();
     const useNumericId = this.usesNumericId("medicines");
     const query = useNumericId
-      ? `INSERT INTO medicines(name, purchase_cost, selling_price, quantity)
-          VALUES($1, $2, $3, $4)
-         RETURNING id, name, purchase_cost, selling_price, quantity`
-      : `INSERT INTO medicines(id, name, purchase_cost, selling_price, quantity)
-          VALUES($1, $2, $3, $4, $5)
-         RETURNING id, name, purchase_cost, selling_price, quantity`;
+      ? `INSERT INTO medicines(name, purchase_cost, selling_price, quantity, type, vendor_name)
+          VALUES($1, $2, $3, $4, $5, $6)
+         RETURNING id, name, purchase_cost, selling_price, quantity, type, vendor_name`
+      : `INSERT INTO medicines(id, name, purchase_cost, selling_price, quantity, type, vendor_name)
+          VALUES($1, $2, $3, $4, $5, $6, $7)
+         RETURNING id, name, purchase_cost, selling_price, quantity, type, vendor_name`;
     const params = useNumericId
-      ? [insertMedicine.name, insertMedicine.purchaseCost, insertMedicine.sellingPrice, insertMedicine.quantity]
+      ? [insertMedicine.name, insertMedicine.purchaseCost, insertMedicine.sellingPrice, insertMedicine.quantity, insertMedicine.type || 'Medicine', insertMedicine.vendorName || '']
       : [
         randomUUID(),
         insertMedicine.name,
         insertMedicine.purchaseCost,
         insertMedicine.sellingPrice,
         insertMedicine.quantity,
+        insertMedicine.type || 'Medicine',
+        insertMedicine.vendorName || '',
       ];
     const { rows } = await pool.query<DbMedicineRow>(query, params);
     const medicine = mapMedicine(rows[0]);
@@ -1066,10 +1098,12 @@ export class PostgresStorage implements IStorage {
        SET name = $2,
             purchase_cost = $3,
             selling_price = $4,
-            quantity = $5
+            quantity = $5,
+            type = $6,
+            vendor_name = $7
        WHERE id = $1
-       RETURNING id, name, purchase_cost, selling_price, quantity`,
-      [dbId, insertMedicine.name, insertMedicine.purchaseCost, insertMedicine.sellingPrice, insertMedicine.quantity]
+       RETURNING id, name, purchase_cost, selling_price, quantity, type, vendor_name`,
+      [dbId, insertMedicine.name, insertMedicine.purchaseCost, insertMedicine.sellingPrice, insertMedicine.quantity, insertMedicine.type || 'Medicine', insertMedicine.vendorName || '']
     );
     const medicine = rows[0] ? mapMedicine(rows[0]) : undefined;
     if (medicine) {
@@ -1098,7 +1132,7 @@ export class PostgresStorage implements IStorage {
       `UPDATE medicines
        SET quantity = GREATEST(0, quantity + $2)
        WHERE id = $1
-       RETURNING id, name, purchase_cost, selling_price, quantity`,
+       RETURNING id, name, purchase_cost, selling_price, quantity, type`,
       [dbId, quantityChange]
     );
     const medicine = rows[0] ? mapMedicine(rows[0]) : undefined;
@@ -1117,7 +1151,7 @@ export class PostgresStorage implements IStorage {
       return cached;
     }
     const { rows } = await pool.query<DbTreatmentRow>(
-      "SELECT id, name, default_price FROM treatments ORDER BY name ASC"
+      "SELECT id, name, default_price, type, equipments FROM treatments ORDER BY name ASC"
     );
     const treatments = rows.map(mapTreatment);
     this.cache.set("treatments", treatments);
@@ -1134,7 +1168,7 @@ export class PostgresStorage implements IStorage {
     }
     const dbId = this.convertId("treatments", id);
     const { rows } = await pool.query<DbTreatmentRow>(
-      "SELECT id, name, default_price FROM treatments WHERE id = $1",
+      "SELECT id, name, default_price, type, equipments FROM treatments WHERE id = $1",
       [dbId]
     );
     const treatment = rows[0] ? mapTreatment(rows[0]) : undefined;
@@ -1148,15 +1182,15 @@ export class PostgresStorage implements IStorage {
     await this.waitForReady();
     const useNumericId = this.usesNumericId("treatments");
     const query = useNumericId
-      ? `INSERT INTO treatments(name, default_price)
-          VALUES($1, $2)
-         RETURNING id, name, default_price`
-      : `INSERT INTO treatments(id, name, default_price)
-          VALUES($1, $2, $3)
-         RETURNING id, name, default_price`;
+      ? `INSERT INTO treatments(name, default_price, type, equipments)
+          VALUES($1, $2, $3, $4)
+         RETURNING id, name, default_price, type, equipments`
+      : `INSERT INTO treatments(id, name, default_price, type, equipments)
+          VALUES($1, $2, $3, $4, $5)
+         RETURNING id, name, default_price, type, equipments`;
     const params = useNumericId
-      ? [insertTreatment.name, insertTreatment.defaultPrice]
-      : [randomUUID(), insertTreatment.name, insertTreatment.defaultPrice];
+      ? [insertTreatment.name, insertTreatment.defaultPrice, insertTreatment.type || 'General', JSON.stringify(insertTreatment.equipments || [])]
+      : [randomUUID(), insertTreatment.name, insertTreatment.defaultPrice, insertTreatment.type || 'General', JSON.stringify(insertTreatment.equipments || [])];
     const { rows } = await pool.query<DbTreatmentRow>(query, params);
     const treatment = mapTreatment(rows[0]);
     this.cache.invalidate("treatments");
@@ -1170,10 +1204,12 @@ export class PostgresStorage implements IStorage {
     const { rows } = await pool.query<DbTreatmentRow>(
       `UPDATE treatments
        SET name = $2,
-            default_price = $3
+            default_price = $3,
+            type = $4,
+            equipments = $5
        WHERE id = $1
-       RETURNING id, name, default_price`,
-      [dbId, insertTreatment.name, insertTreatment.defaultPrice]
+       RETURNING id, name, default_price, type, equipments`,
+      [dbId, insertTreatment.name, insertTreatment.defaultPrice, insertTreatment.type || 'General', JSON.stringify(insertTreatment.equipments || [])]
     );
     const treatment = rows[0] ? mapTreatment(rows[0]) : undefined;
     if (treatment) {
@@ -1278,7 +1314,7 @@ export class PostgresStorage implements IStorage {
   async getBill(id: string): Promise<Bill | undefined> {
     await this.waitForReady();
     const normalizedId = normalizeId(id);
-    const cacheKey = `bill:${normalizedId} `;
+    const cacheKey = `bill:${normalizedId}`;
     const cached = this.cache.get<Bill>(cacheKey);
     if (cached) {
       return cached;
@@ -1395,7 +1431,7 @@ export class PostgresStorage implements IStorage {
     try {
       await client.query('BEGIN');
 
-      // 1. Validate and Update Stock
+      // 1. Validate and Update Stock for regular medicines
       if (insertBill.medicines && insertBill.medicines.length > 0) {
         for (const med of insertBill.medicines) {
           if (med.medicineId) {
@@ -1422,6 +1458,56 @@ export class PostgresStorage implements IStorage {
               "UPDATE medicines SET quantity = quantity - $2 WHERE id = $1",
               [dbMedId, med.quantity]
             );
+          }
+        }
+      }
+
+      // 1.5 Validate and Update Equipment Stock for Surgery Treatments
+      const processedTreatments = [];
+      if (insertBill.treatments && insertBill.treatments.length > 0) {
+        for (const t of insertBill.treatments) {
+          const dbTreatmentId = this.convertId("treatments", t.treatmentId);
+          const { rows: tRows } = await client.query<DbTreatmentRow>(
+            "SELECT * FROM treatments WHERE id = $1",
+            [dbTreatmentId]
+          );
+          const treatmentObj = tRows[0] ? mapTreatment(tRows[0]) : undefined;
+          
+          const tEquipments = (treatmentObj && treatmentObj.type === "Surgery" && treatmentObj.equipments)
+            ? treatmentObj.equipments
+            : [];
+            
+          processedTreatments.push({
+            ...t,
+            equipments: tEquipments
+          });
+
+          for (const eq of tEquipments) {
+            if (eq.medicineId) {
+              const dbEquipMedId = this.convertId("medicines", eq.medicineId);
+
+              // Check stock with lock
+              const { rows: eqMedRows } = await client.query<DbMedicineRow>(
+                "SELECT * FROM medicines WHERE id = $1 FOR UPDATE",
+                [dbEquipMedId]
+              );
+
+              const eqMedicine = eqMedRows[0] ? mapMedicine(eqMedRows[0]) : undefined;
+
+              if (!eqMedicine) {
+                throw new Error(`Surgery equipment item with ID ${eq.medicineId} not found`);
+              }
+
+              if (eqMedicine.quantity < eq.quantity) {
+                throw new Error(`Insufficient stock for surgery equipment "${eqMedicine.name}". Available: ${eqMedicine.quantity}, Required: ${eq.quantity}`);
+              }
+
+              // Deduct stock
+              await client.query(
+                "UPDATE medicines SET quantity = quantity - $2 WHERE id = $1",
+                [dbEquipMedId, eq.quantity]
+              );
+            }
           }
         }
       }
@@ -1475,7 +1561,7 @@ export class PostgresStorage implements IStorage {
           patientIdValue,
           patientName,
           insertBill.date,
-          JSON.stringify(insertBill.treatments || []),
+          JSON.stringify(processedTreatments),
           JSON.stringify(insertBill.medicines || []),
           insertBill.treatmentTotal,
           insertBill.medicineTotal,
@@ -1491,7 +1577,7 @@ export class PostgresStorage implements IStorage {
           patientIdValue,
           patientName,
           insertBill.date,
-          JSON.stringify(insertBill.treatments || []),
+          JSON.stringify(processedTreatments),
           JSON.stringify(insertBill.medicines || []),
           insertBill.treatmentTotal,
           insertBill.medicineTotal,
@@ -1571,7 +1657,7 @@ export class PostgresStorage implements IStorage {
     const bill = rows[0] ? mapBill(rows[0]) : undefined;
     if (bill) {
       this.cache.invalidate("bills");
-      this.cache.invalidate(`bill: ${ bill.id } `);
+      this.cache.invalidate(`bill:${bill.id}`);
     }
     return bill;
   }
@@ -1591,7 +1677,7 @@ export class PostgresStorage implements IStorage {
     const bill = rows[0] ? mapBill(rows[0]) : undefined;
     if (bill) {
       this.cache.invalidate("bills");
-      this.cache.invalidate(`bill: ${ bill.id } `);
+      this.cache.invalidate(`bill:${bill.id}`);
     }
     return bill;
   }
@@ -1603,7 +1689,7 @@ export class PostgresStorage implements IStorage {
     const success = (result.rowCount ?? 0) > 0;
     if (success) {
       this.cache.invalidate("bills");
-      this.cache.invalidate(`bill: ${ normalizeId(id) } `);
+      this.cache.invalidate(`bill:${normalizeId(id)}`);
     }
     return success;
   }
@@ -1746,7 +1832,7 @@ export class PostgresStorage implements IStorage {
     const total = parseInt(countResult[0]?.count || "0", 10);
 
     const { rows } = await pool.query<DbMedicineRow>(
-      `SELECT id, name, purchase_cost, selling_price, quantity FROM medicines 
+      `SELECT id, name, purchase_cost, selling_price, quantity, type, vendor_name FROM medicines 
        ORDER BY name ASC 
        LIMIT $1 OFFSET $2`,
       [limit, offset]
@@ -1766,7 +1852,7 @@ export class PostgresStorage implements IStorage {
     const total = parseInt(countResult[0]?.count || "0", 10);
 
     const { rows } = await pool.query<DbTreatmentRow>(
-      `SELECT id, name, default_price FROM treatments 
+      `SELECT id, name, default_price, type, equipments FROM treatments 
        ORDER BY name ASC 
        LIMIT $1 OFFSET $2`,
       [limit, offset]

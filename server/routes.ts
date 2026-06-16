@@ -384,16 +384,80 @@ export async function registerRoutes(
         return res.status(400).json({ error: "Patient not found" });
       }
 
-      // Get existing bill to restore medicine stock
+      // Validate all new medicines and new treatments' equipments stock levels first
+      const stockAdjustments = new Map<string, number>();
+
       const existingBill = await storage.getBill(req.params.id);
       if (existingBill) {
-        // Restore medicine stock from old bill
         for (const med of existingBill.medicines) {
-          await storage.updateMedicineStock(med.medicineId, med.quantity);
+          stockAdjustments.set(med.medicineId, (stockAdjustments.get(med.medicineId) || 0) + med.quantity);
+        }
+        for (const t of existingBill.treatments) {
+          if (t.equipments) {
+            for (const eq of t.equipments) {
+              stockAdjustments.set(eq.medicineId, (stockAdjustments.get(eq.medicineId) || 0) + eq.quantity);
+            }
+          }
         }
       }
 
-      // Reduce medicine stock for new bill
+      // Populate equipments snapshot and add stock adjustments
+      const processedTreatments = [];
+      for (const t of validated.treatments) {
+        const tRecord = await storage.getTreatment(t.treatmentId);
+        const equipments = (tRecord && tRecord.type === "Surgery" && tRecord.equipments)
+          ? tRecord.equipments
+          : [];
+        processedTreatments.push({
+          ...t,
+          equipments
+        });
+
+        for (const eq of equipments) {
+          stockAdjustments.set(eq.medicineId, (stockAdjustments.get(eq.medicineId) || 0) - eq.quantity);
+        }
+      }
+      validated.treatments = processedTreatments;
+
+      for (const med of validated.medicines) {
+        stockAdjustments.set(med.medicineId, (stockAdjustments.get(med.medicineId) || 0) - med.quantity);
+      }
+
+      // Check if any net adjustment causes negative stock levels
+      for (const [medicineId, change] of Array.from(stockAdjustments.entries())) {
+        if (change < 0) {
+          const med = await storage.getMedicine(medicineId);
+          const currentQty = med?.quantity || 0;
+          if (currentQty + change < 0) {
+            return res.status(400).json({
+              error: `Insufficient stock for "${med?.name || 'Item'}". Available: ${currentQty}, Required additional: ${Math.abs(change)}`
+            });
+          }
+        }
+      }
+
+      // Restore old stock
+      if (existingBill) {
+        for (const med of existingBill.medicines) {
+          await storage.updateMedicineStock(med.medicineId, med.quantity);
+        }
+        for (const t of existingBill.treatments) {
+          if (t.equipments) {
+            for (const eq of t.equipments) {
+              await storage.updateMedicineStock(eq.medicineId, eq.quantity);
+            }
+          }
+        }
+      }
+
+      // Deduct new stock
+      for (const t of validated.treatments) {
+        if (t.equipments) {
+          for (const eq of t.equipments) {
+            await storage.updateMedicineStock(eq.medicineId, -eq.quantity);
+          }
+        }
+      }
       for (const med of validated.medicines) {
         await storage.updateMedicineStock(med.medicineId, -med.quantity);
       }
@@ -487,6 +551,18 @@ export async function registerRoutes(
       for (const med of medicines) {
         if (med && med.medicineId && med.quantity) {
           await storage.updateMedicineStock(med.medicineId, med.quantity);
+        }
+      }
+
+      // Restore equipment stock for deleted bill's treatments
+      const treatments = Array.isArray(bill.treatments) ? bill.treatments : [];
+      for (const t of treatments) {
+        if (t && t.equipments) {
+          for (const eq of t.equipments) {
+            if (eq && eq.medicineId && eq.quantity) {
+              await storage.updateMedicineStock(eq.medicineId, eq.quantity);
+            }
+          }
         }
       }
 

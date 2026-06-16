@@ -37,6 +37,10 @@ export default function Dashboard() {
   const [selectedDate, setSelectedDate] = useState<string>(format(new Date(), "yyyy-MM-dd"));
   const isToday = selectedDate === format(new Date(), "yyyy-MM-dd");
 
+  const [patientDateFilter, setPatientDateFilter] = useState<string>("all-time");
+  const [patientStartDate, setPatientStartDate] = useState<string>("");
+  const [patientEndDate, setPatientEndDate] = useState<string>("");
+
   const form = useForm<AppointmentForm>({
     resolver: zodResolver(insertAppointmentSchema),
     defaultValues: {
@@ -153,14 +157,12 @@ export default function Dashboard() {
   );
 
   // New patients this month = Patients registered this month
-  // (Registration is their first visit, so they are "new" patients)
   const newPatientsThisMonth = patients.filter((p) => {
     const regDate = new Date(p.registrationDate);
     return isWithinInterval(regDate, { start: currentMonthStart, end: currentMonthEnd });
   });
 
   // Repeat visit patients this month = Patients registered BEFORE this month who have a visit THIS month
-  // (They are returning/follow-up patients)
   const repeatPatientsThisMonth = patients.filter((p) => {
     const regDate = new Date(p.registrationDate);
     const wasRegisteredBeforeThisMonth = regDate < currentMonthStart;
@@ -169,55 +171,138 @@ export default function Dashboard() {
   });
   const repeatVisitPatientsCount = repeatPatientsThisMonth.length;
 
+  // Active Date Filter interval calculations for "All Patients" section
+  const getPatientDateInterval = (): { start: Date; end: Date } | null => {
+    if (patientDateFilter === "all-time") return null;
+
+    const now = new Date();
+    let start = new Date();
+    let end = new Date();
+
+    if (patientDateFilter === "today") {
+      start.setHours(0, 0, 0, 0);
+      end.setHours(23, 59, 59, 999);
+    } else if (patientDateFilter === "this-week") {
+      const day = now.getDay();
+      start = new Date(now.setDate(now.getDate() - day));
+      start.setHours(0, 0, 0, 0);
+      end = new Date(start);
+      end.setDate(end.getDate() + 6);
+      end.setHours(23, 59, 59, 999);
+    } else if (patientDateFilter === "this-month") {
+      start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+      end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+    } else if (patientDateFilter === "last-month") {
+      start = new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0, 0);
+      end = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+    } else if (patientDateFilter === "custom") {
+      if (!patientStartDate || !patientEndDate) return null;
+      start = new Date(patientStartDate);
+      start.setHours(0, 0, 0, 0);
+      end = new Date(patientEndDate);
+      end.setHours(23, 59, 59, 999);
+    } else {
+      return null;
+    }
+
+    return { start, end };
+  };
+
+  const pInterval = getPatientDateInterval();
+
+  // New Patients in active interval
+  const activeNewPatients = patients.filter((p) => {
+    const regDate = new Date(p.registrationDate);
+    const interval = pInterval || { start: currentMonthStart, end: currentMonthEnd };
+    return isWithinInterval(regDate, interval);
+  });
+
+  // Visits in active interval
+  const activeIntervalVisits = visits.filter((v) => {
+    const visitDate = new Date(v.date);
+    const interval = pInterval || { start: currentMonthStart, end: currentMonthEnd };
+    return isWithinInterval(visitDate, interval);
+  });
+  const activePatientIdsWithVisits = new Set(activeIntervalVisits.map((v) => v.patientId));
+
+  // Repeat Patients in active interval (registered before interval start, visited during interval)
+  const activeRepeatPatients = patients.filter((p) => {
+    const regDate = new Date(p.registrationDate);
+    const intervalStart = pInterval ? pInterval.start : currentMonthStart;
+    return regDate < intervalStart && activePatientIdsWithVisits.has(p.id);
+  });
+
+  // Scheduled appointments in active interval
+  const activeUpcomingAppointments = appointments.filter((a) => {
+    if (a.status !== "Scheduled") return false;
+    const apDate = new Date(a.date);
+    if (pInterval) {
+      return isWithinInterval(apDate, pInterval);
+    } else {
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+      return apDate >= todayStart;
+    }
+  });
+  const activeUpcomingPatientIds = new Set(activeUpcomingAppointments.map((a) => a.patientId));
+
+  // All patients related to active interval
+  const activeAllPatients = patients.filter((p) => {
+    if (!pInterval) return true;
+    const regDate = new Date(p.registrationDate);
+    const registeredInInterval = isWithinInterval(regDate, pInterval);
+    const visitedInInterval = activePatientIdsWithVisits.has(p.id);
+    const hasAppointmentInInterval = activeUpcomingPatientIds.has(p.id);
+    return registeredInInterval || visitedInInterval || hasAppointmentInInterval;
+  });
+
   // Get displayed patients based on filter
   const getDisplayedPatients = () => {
-    let basePatients = filteredPatients;
+    let basePatients = [];
 
     if (patientFilter === "new") {
-      basePatients = newPatientsThisMonth.filter(
-        (patient) =>
-          patient.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          patient.phone.includes(searchQuery)
-      );
+      basePatients = activeNewPatients;
     } else if (patientFilter === "repeat") {
-      basePatients = repeatPatientsThisMonth
-        .filter(
-          (patient) =>
-            patient.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            patient.phone.includes(searchQuery)
-        )
-        // Sort by last visit date (most recent first)
-        .sort((a, b) => {
-          const aVisits = visits.filter((v) => v.patientId === a.id);
-          const bVisits = visits.filter((v) => v.patientId === b.id);
-          const aLastVisit = aVisits.length > 0 ? Math.max(...aVisits.map(v => new Date(v.date).getTime())) : 0;
-          const bLastVisit = bVisits.length > 0 ? Math.max(...bVisits.map(v => new Date(v.date).getTime())) : 0;
-          return bLastVisit - aLastVisit; // Most recent first
-        });
+      basePatients = activeRepeatPatients;
     } else if (patientFilter === "upcoming") {
-      basePatients = filteredPatients
-        .filter((patient) => {
-          const nextVisit = appointments
-            .filter(a => a.patientId === patient.id && a.status === "Scheduled")
-            .find(a => new Date(a.date) >= new Date(new Date().setHours(24, 0, 0, 0))); // Start from tomorrow
-          return !!nextVisit;
-        })
-        .sort((a, b) => {
-          const aNextVisit = appointments
-            .filter(ap => ap.patientId === a.id && ap.status === "Scheduled")
-            .sort((ap1, ap2) => new Date(ap1.date).getTime() - new Date(ap2.date).getTime())
-            .find(ap => new Date(ap.date) >= new Date(new Date().setHours(24, 0, 0, 0)));
-
-          const bNextVisit = appointments
-            .filter(ap => ap.patientId === b.id && ap.status === "Scheduled")
-            .sort((ap1, ap2) => new Date(ap1.date).getTime() - new Date(ap2.date).getTime())
-            .find(ap => new Date(ap.date) >= new Date(new Date().setHours(24, 0, 0, 0)));
-
-          if (!aNextVisit) return 1;
-          if (!bNextVisit) return -1;
-          return new Date(aNextVisit.date).getTime() - new Date(bNextVisit.date).getTime();
-        });
+      basePatients = patients.filter((p) => activeUpcomingPatientIds.has(p.id));
+    } else {
+      basePatients = activeAllPatients;
     }
+
+    // Filter by search query
+    basePatients = basePatients.filter(
+      (patient) =>
+        patient.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        patient.phone.includes(searchQuery)
+    );
+
+    // Apply sorting
+    basePatients.sort((a, b) => {
+      if (patientFilter === "upcoming") {
+        const aNext = activeUpcomingAppointments
+          .filter(ap => ap.patientId === a.id)
+          .sort((ap1, ap2) => new Date(ap1.date).getTime() - new Date(ap2.date).getTime())[0];
+        const bNext = activeUpcomingAppointments
+          .filter(ap => ap.patientId === b.id)
+          .sort((ap1, ap2) => new Date(ap1.date).getTime() - new Date(ap2.date).getTime())[0];
+
+        if (!aNext) return 1;
+        if (!bNext) return -1;
+        return new Date(aNext.date).getTime() - new Date(bNext.date).getTime();
+      }
+
+      if (patientFilter === "repeat") {
+        const aVisits = activeIntervalVisits.filter((v) => v.patientId === a.id);
+        const bVisits = activeIntervalVisits.filter((v) => v.patientId === b.id);
+        const aLast = aVisits.length > 0 ? Math.max(...aVisits.map(v => new Date(v.date).getTime())) : 0;
+        const bLast = bVisits.length > 0 ? Math.max(...bVisits.map(v => new Date(v.date).getTime())) : 0;
+        return bLast - aLast;
+      }
+
+      // Default: sort by registration date (newest first)
+      return new Date(b.registrationDate).getTime() - new Date(a.registrationDate).getTime();
+    });
 
     return basePatients;
   };
@@ -225,10 +310,10 @@ export default function Dashboard() {
   const displayedPatients = getDisplayedPatients();
   const totalPages = Math.ceil(displayedPatients.length / ITEMS_PER_PAGE);
 
-  // Reset to first page when filter or search changes
+  // Reset to first page when filter, search, or date filter changes
   useEffect(() => {
     setCurrentPage(1);
-  }, [patientFilter, searchQuery]);
+  }, [patientFilter, searchQuery, patientDateFilter, patientStartDate, patientEndDate]);
 
   // Get current page entries
   const paginatedPatients = displayedPatients.slice(
@@ -637,18 +722,53 @@ export default function Dashboard() {
           <div className="flex flex-col gap-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <CardTitle className="text-lg font-medium">All Patients</CardTitle>
-              <div className="relative w-full sm:w-80">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <Input
-                  type="search"
-                  placeholder="Search by name or phone..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-9"
-                  data-testid="input-patient-search"
-                />
+              <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
+                <div className="relative w-full sm:w-80">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <Input
+                    type="search"
+                    placeholder="Search by name or phone..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="pl-9"
+                    data-testid="input-patient-search"
+                  />
+                </div>
+                <Select value={patientDateFilter} onValueChange={setPatientDateFilter}>
+                  <SelectTrigger className="w-full sm:w-48 bg-background">
+                    <SelectValue placeholder="All Time" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all-time">All Time</SelectItem>
+                    <SelectItem value="today">Today</SelectItem>
+                    <SelectItem value="this-week">This Week</SelectItem>
+                    <SelectItem value="this-month">This Month</SelectItem>
+                    <SelectItem value="last-month">Last Month</SelectItem>
+                    <SelectItem value="custom">Custom Range</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             </div>
+
+            {patientDateFilter === "custom" && (
+              <div className="flex flex-col sm:flex-row gap-2 w-full max-w-md">
+                <Input
+                  type="date"
+                  value={patientStartDate}
+                  onChange={(e) => setPatientStartDate(e.target.value)}
+                  placeholder="Start date"
+                  className="flex-1"
+                />
+                <Input
+                  type="date"
+                  value={patientEndDate}
+                  onChange={(e) => setPatientEndDate(e.target.value)}
+                  placeholder="End date"
+                  className="flex-1"
+                />
+              </div>
+            )}
+
             <div className="flex gap-2 flex-wrap">
               <button
                 onClick={() => setPatientFilter("all")}
@@ -657,7 +777,12 @@ export default function Dashboard() {
                   : "bg-muted hover:bg-muted/80"
                   }`}
               >
-                All ({filteredPatients.length})
+                All ({
+                  activeAllPatients.filter((p) =>
+                    p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                    p.phone.includes(searchQuery)
+                  ).length
+                })
               </button>
               <button
                 onClick={() => setPatientFilter("new")}
@@ -666,7 +791,12 @@ export default function Dashboard() {
                   : "bg-blue-100 text-blue-700 hover:bg-blue-200"
                   }`}
               >
-                New This Month ({newPatientsThisMonth.length})
+                New ({
+                  activeNewPatients.filter((p) =>
+                    p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                    p.phone.includes(searchQuery)
+                  ).length
+                })
               </button>
               <button
                 onClick={() => setPatientFilter("repeat")}
@@ -675,7 +805,12 @@ export default function Dashboard() {
                   : "bg-purple-100 text-purple-700 hover:bg-purple-200"
                   }`}
               >
-                Repeat Visits ({repeatPatientsThisMonth.length})
+                Repeat Visits ({
+                  activeRepeatPatients.filter((p) =>
+                    p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                    p.phone.includes(searchQuery)
+                  ).length
+                })
               </button>
               <button
                 onClick={() => setPatientFilter("upcoming")}
@@ -684,7 +819,13 @@ export default function Dashboard() {
                   : "bg-blue-100 text-blue-700 hover:bg-blue-200"
                   }`}
               >
-                Upcoming Visits
+                Upcoming Visits ({
+                  patients.filter((p) =>
+                    activeUpcomingPatientIds.has(p.id) &&
+                    (p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                     p.phone.includes(searchQuery))
+                  ).length
+                })
               </button>
             </div>
           </div>
@@ -724,6 +865,31 @@ export default function Dashboard() {
                     .filter(a => a.patientId === patient.id && a.status === "Scheduled")
                     .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
                     .find(a => new Date(a.date) >= new Date(new Date().setHours(0, 0, 0, 0)));
+
+                  // Determine what date to show prominently on the right side
+                  let rightDateLabel = "";
+                  let rightDateVal = "";
+                  if (patientFilter === "upcoming" && nextVisit) {
+                    rightDateLabel = "Next Visit";
+                    rightDateVal = nextVisit.date;
+                  } else if (patientFilter === "repeat" && lastVisit) {
+                    rightDateLabel = "Last Visit";
+                    rightDateVal = lastVisit.date;
+                  } else if (patientFilter === "new") {
+                    rightDateLabel = "Registered";
+                    rightDateVal = patient.registrationDate;
+                  } else {
+                    if (nextVisit) {
+                      rightDateLabel = "Next Visit";
+                      rightDateVal = nextVisit.date;
+                    } else if (lastVisit) {
+                      rightDateLabel = "Last Visit";
+                      rightDateVal = lastVisit.date;
+                    } else {
+                      rightDateLabel = "Registered";
+                      rightDateVal = patient.registrationDate;
+                    }
+                  }
 
                   return (
                     <Link
@@ -780,7 +946,19 @@ export default function Dashboard() {
                             </div>
                           </div>
                         </div>
-                        <ChevronRight className="w-5 h-5 text-muted-foreground" />
+                        <div className="flex items-center gap-4">
+                          {rightDateVal && (
+                            <div className="text-right hidden sm:block pr-2 border-r mr-2 border-border/60">
+                              <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold block">
+                                {rightDateLabel}
+                              </span>
+                              <span className={`text-sm font-semibold ${rightDateLabel === "Next Visit" ? "text-blue-600" : "text-foreground"}`}>
+                                {format(new Date(rightDateVal), "dd MMM yyyy")}
+                              </span>
+                            </div>
+                          )}
+                          <ChevronRight className="w-5 h-5 text-muted-foreground" />
+                        </div>
                       </div>
                     </Link>
                   );

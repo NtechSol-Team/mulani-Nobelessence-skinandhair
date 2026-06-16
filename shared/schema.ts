@@ -85,6 +85,8 @@ export interface Medicine {
   purchaseCost: number;
   sellingPrice: number;
   quantity: number;
+  type: "Medicine" | "Equipment";
+  vendorName?: string;
 }
 
 export const insertMedicineSchema = z.object({
@@ -92,20 +94,34 @@ export const insertMedicineSchema = z.object({
   purchaseCost: z.number().min(0, "Purchase cost must be positive"),
   sellingPrice: z.number().min(0, "Selling price must be positive"),
   quantity: z.number().min(0, "Quantity must be positive"),
+  type: z.enum(["Medicine", "Equipment"]).default("Medicine"),
+  vendorName: z.string().optional().default(""),
 });
 
 export type InsertMedicine = z.infer<typeof insertMedicineSchema>;
 
 // Treatment Schema
+export interface TreatmentEquipmentItem {
+  medicineId: string;
+  quantity: number;
+}
+
 export interface Treatment {
   id: string;
   name: string;
   defaultPrice: number;
+  type: "General" | "Surgery";
+  equipments?: TreatmentEquipmentItem[];
 }
 
 export const insertTreatmentSchema = z.object({
   name: z.string().min(1, "Treatment name is required"),
   defaultPrice: z.number().min(0, "Price must be positive"),
+  type: z.enum(["General", "Surgery"]).default("General"),
+  equipments: z.array(z.object({
+    medicineId: z.string(),
+    quantity: z.number().min(1),
+  })).optional().default([]),
 });
 
 export type InsertTreatment = z.infer<typeof insertTreatmentSchema>;
@@ -126,6 +142,7 @@ export interface BillTreatmentItem {
   treatmentId: string;
   treatmentName: string;
   price: number;
+  equipments?: TreatmentEquipmentItem[];
 }
 
 // Bill Schema
@@ -153,6 +170,10 @@ export const insertBillSchema = z.object({
     treatmentId: z.string(),
     treatmentName: z.string(),
     price: z.number(),
+    equipments: z.array(z.object({
+      medicineId: z.string(),
+      quantity: z.number().min(1),
+    })).optional(),
   })),
   medicines: z.array(z.object({
     medicineId: z.string(),
