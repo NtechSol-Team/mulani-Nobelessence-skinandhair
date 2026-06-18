@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { Users, UserCheck, Calendar, Gift, MessageSquare, ArrowRight, Activity, TrendingUp } from "lucide-react";
+import { Users, UserCheck, Calendar, Gift, MessageSquare, ArrowRight, Activity, TrendingUp, UserX } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -108,11 +108,11 @@ export default function CRMDashboard() {
         <Card className="hover-elevate transition-all">
           <CardContent className="p-6 flex items-center justify-between">
             <div className="space-y-2">
-              <p className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Active Prospects</p>
-              <h3 className="text-3xl font-bold">{stats?.activeLeads || 0}</h3>
+              <p className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Lost Leads</p>
+              <h3 className="text-3xl font-bold">{stats?.lostLeads || 0}</h3>
             </div>
-            <div className="w-12 h-12 rounded-lg bg-amber-500/10 flex items-center justify-center text-amber-500">
-              <Activity className="w-6 h-6" />
+            <div className="w-12 h-12 rounded-lg bg-red-500/10 flex items-center justify-center text-red-500">
+              <UserX className="w-6 h-6" />
             </div>
           </CardContent>
         </Card>
