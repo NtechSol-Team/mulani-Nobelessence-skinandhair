@@ -62,6 +62,7 @@ import { insertMedicineSchema } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
 import { extractPaginatedData } from "@/lib/utils";
 import { z } from "zod";
+import { useAuth } from "@/hooks/use-auth";
 
 const medicineFormSchema = insertMedicineSchema;
 
@@ -69,6 +70,10 @@ type MedicineForm = z.infer<typeof medicineFormSchema>;
 
 export default function Medicines() {
   const { toast } = useToast();
+  const { user } = useAuth();
+  const canAdd = user?.role === "SuperAdmin" || !!user?.permissions?.medicines?.add;
+  const canEdit = user?.role === "SuperAdmin" || !!user?.permissions?.medicines?.edit;
+  const canDelete = user?.role === "SuperAdmin" || !!user?.permissions?.medicines?.delete;
   const queryClient = useQueryClient();
   const [searchQuery, setSearchQuery] = useState("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -277,53 +282,115 @@ export default function Medicines() {
                   data-testid="input-medicine-search"
                 />
               </div>
-              <Dialog open={isDialogOpen} onOpenChange={(open) => !open && closeDialog()}>
-                <DialogTrigger asChild>
-                  <Button onClick={() => setIsDialogOpen(true)} data-testid="button-add-medicine">
-                    <Plus className="w-4 h-4 mr-2" />
-                    Add Medicine
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>
-                      {editingMedicine ? "Edit Medicine" : "Add New Medicine"}
-                    </DialogTitle>
-                  </DialogHeader>
-                  <Form {...form}>
-                    <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-                      <FormField
-                        control={form.control}
-                        name="name"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Medicine Name</FormLabel>
-                            <FormControl>
-                              <Input
-                                placeholder="Enter medicine name"
-                                {...field}
-                                data-testid="input-medicine-name"
-                              />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
-                      <div className="grid grid-cols-2 gap-4">
+              {canAdd && (
+                <Dialog open={isDialogOpen} onOpenChange={(open) => !open && closeDialog()}>
+                  <DialogTrigger asChild>
+                    <Button onClick={() => setIsDialogOpen(true)} data-testid="button-add-medicine">
+                      <Plus className="w-4 h-4 mr-2" />
+                      Add Medicine
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>
+                        {editingMedicine ? "Edit Medicine" : "Add New Medicine"}
+                      </DialogTitle>
+                    </DialogHeader>
+                    <Form {...form}>
+                      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
                         <FormField
                           control={form.control}
-                          name="purchaseCost"
+                          name="name"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>Purchase Cost (₹)</FormLabel>
+                              <FormLabel>Medicine Name</FormLabel>
                               <FormControl>
                                 <Input
-                                  type="number"
-                                  placeholder="0"
+                                  placeholder="Enter medicine name"
                                   {...field}
-                                  onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
-                                  data-testid="input-purchase-cost"
+                                  data-testid="input-medicine-name"
+                                />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <div className="grid grid-cols-2 gap-4">
+                          <FormField
+                            control={form.control}
+                            name="purchaseCost"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Purchase Cost (₹)</FormLabel>
+                                <FormControl>
+                                  <Input
+                                    type="number"
+                                    placeholder="0"
+                                    {...field}
+                                    onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
+                                    data-testid="input-purchase-cost"
+                                  />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+
+                          <FormField
+                            control={form.control}
+                            name="sellingPrice"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Selling Price (₹)</FormLabel>
+                                <FormControl>
+                                  <Input
+                                    type="number"
+                                    placeholder="0"
+                                    {...field}
+                                    onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
+                                    data-testid="input-selling-price"
+                                  />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        </div>
+
+                        <FormField
+                          control={form.control}
+                          name="type"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Type</FormLabel>
+                              <Select onValueChange={field.onChange} value={field.value}>
+                                <FormControl>
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Select type" />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  <SelectItem value="Medicine">Medicine</SelectItem>
+                                  <SelectItem value="Equipment">Surgery Equipment</SelectItem>
+                                </SelectContent>
+                              </Select>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={form.control}
+                          name="vendorName"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Vendor Name</FormLabel>
+                              <FormControl>
+                                <Input
+                                  placeholder="Enter vendor name"
+                                  {...field}
+                                  data-testid="input-vendor-name"
                                 />
                               </FormControl>
                               <FormMessage />
@@ -333,108 +400,45 @@ export default function Medicines() {
 
                         <FormField
                           control={form.control}
-                          name="sellingPrice"
+                          name="quantity"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>Selling Price (₹)</FormLabel>
+                              <FormLabel>Stock Quantity</FormLabel>
                               <FormControl>
                                 <Input
                                   type="number"
                                   placeholder="0"
                                   {...field}
-                                  onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
-                                  data-testid="input-selling-price"
+                                  onChange={(e) => field.onChange(parseInt(e.target.value) || 0)}
+                                  data-testid="input-quantity"
                                 />
                               </FormControl>
                               <FormMessage />
                             </FormItem>
                           )}
                         />
-                      </div>
 
-                      <FormField
-                        control={form.control}
-                        name="type"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Type</FormLabel>
-                            <Select
-                              onValueChange={field.onChange}
-                              value={field.value}
-                            >
-                              <FormControl>
-                                <SelectTrigger data-testid="select-medicine-type">
-                                  <SelectValue placeholder="Select type" />
-                                </SelectTrigger>
-                              </FormControl>
-                              <SelectContent>
-                                <SelectItem value="Medicine">Medicine</SelectItem>
-                                <SelectItem value="Equipment">Surgery Equipment</SelectItem>
-                              </SelectContent>
-                            </Select>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        control={form.control}
-                        name="vendorName"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Vendor Name</FormLabel>
-                            <FormControl>
-                              <Input
-                                placeholder="Enter vendor name"
-                                {...field}
-                                data-testid="input-vendor-name"
-                              />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        control={form.control}
-                        name="quantity"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Stock Quantity</FormLabel>
-                            <FormControl>
-                              <Input
-                                type="number"
-                                placeholder="0"
-                                {...field}
-                                onChange={(e) => field.onChange(parseInt(e.target.value) || 0)}
-                                data-testid="input-quantity"
-                              />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
-                      <div className="flex justify-end gap-3 pt-2">
-                        <Button type="button" variant="outline" onClick={closeDialog}>
-                          Cancel
-                        </Button>
-                        <Button
-                          type="submit"
-                          disabled={createMutation.isPending || updateMutation.isPending}
-                          data-testid="button-save-medicine"
-                        >
-                          {createMutation.isPending || updateMutation.isPending
-                            ? "Saving..."
-                            : editingMedicine
-                            ? "Update"
-                            : "Add Medicine"}
-                        </Button>
-                      </div>
-                    </form>
-                  </Form>
-                </DialogContent>
-              </Dialog>
+                        <div className="flex justify-end gap-3 pt-2">
+                          <Button type="button" variant="outline" onClick={closeDialog}>
+                            Cancel
+                          </Button>
+                          <Button
+                            type="submit"
+                            disabled={createMutation.isPending || updateMutation.isPending}
+                            data-testid="button-save-medicine"
+                          >
+                            {createMutation.isPending || updateMutation.isPending
+                              ? "Saving..."
+                              : editingMedicine
+                              ? "Update"
+                              : "Add Medicine"}
+                          </Button>
+                        </div>
+                      </form>
+                    </Form>
+                  </DialogContent>
+                </Dialog>
+              )}
             </div>
           </div>
         </CardHeader>
@@ -506,23 +510,27 @@ export default function Medicines() {
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-1">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => openEditDialog(medicine)}
-                              data-testid={`button-edit-medicine-${medicine.id}`}
-                            >
-                              <Edit2 className="w-4 h-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="text-destructive"
-                              onClick={() => setDeletingMedicine(medicine)}
-                              data-testid={`button-delete-medicine-${medicine.id}`}
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
+                            {canEdit && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => openEditDialog(medicine)}
+                                data-testid={`button-edit-medicine-${medicine.id}`}
+                              >
+                                <Edit2 className="w-4 h-4" />
+                              </Button>
+                            )}
+                            {canDelete && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="text-destructive"
+                                onClick={() => setDeletingMedicine(medicine)}
+                                data-testid={`button-delete-medicine-${medicine.id}`}
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            )}
                           </div>
                         </TableCell>
                       </TableRow>

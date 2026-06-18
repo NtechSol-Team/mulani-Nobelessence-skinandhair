@@ -25,7 +25,19 @@ import NotFound from "@/pages/not-found";
 import { AuthProvider, useAuth } from "@/hooks/use-auth";
 import { Loader2 } from "lucide-react";
 
-function ProtectedRoute(props: { component: React.ComponentType<any>, path?: string }) {
+import UsersPage from "@/pages/users";
+
+function ProtectedRoute({ 
+  component: Component, 
+  path, 
+  requiredModule, 
+  requireSuperAdmin 
+}: { 
+  component: React.ComponentType<any>; 
+  path?: string; 
+  requiredModule?: string; 
+  requireSuperAdmin?: boolean; 
+}) {
   const { user, isLoading } = useAuth();
 
   if (isLoading) {
@@ -40,7 +52,18 @@ function ProtectedRoute(props: { component: React.ComponentType<any>, path?: str
     return <Redirect to="/auth" />;
   }
 
-  return <Route path={props.path} component={props.component} />;
+  if (requireSuperAdmin && user.role !== "SuperAdmin") {
+    return <Redirect to="/" />;
+  }
+
+  if (requiredModule && user.role !== "SuperAdmin") {
+    const hasPerm = !!user.permissions?.[requiredModule]?.view;
+    if (!hasPerm) {
+      return <Redirect to="/" />;
+    }
+  }
+
+  return <Route path={path} component={Component} />;
 }
 
 function Router() {
@@ -48,19 +71,20 @@ function Router() {
     <Switch>
       <Route path="/auth" component={AuthPage} />
       <ProtectedRoute path="/" component={Dashboard} />
-      <ProtectedRoute path="/registration" component={Registration} />
-      <ProtectedRoute path="/patient/:id" component={PatientDetails} />
-      <ProtectedRoute path="/billing" component={BillingCreate} />
-      <ProtectedRoute path="/bills" component={BillingManage} />
-      <ProtectedRoute path="/medicines" component={Medicines} />
-      <ProtectedRoute path="/treatments" component={Treatments} />
-      <ProtectedRoute path="/departments" component={Departments} />
-      <ProtectedRoute path="/expenses" component={Expenses} />
-      <ProtectedRoute path="/appointments" component={AppointmentMaster} />
-      <ProtectedRoute path="/reports" component={Reports} />
-      <ProtectedRoute path="/crm" component={CRMDashboard} />
-      <ProtectedRoute path="/crm/leads" component={CRMLeads} />
-      <ProtectedRoute path="/crm/tasks" component={CRMTasks} />
+      <ProtectedRoute path="/registration" component={Registration} requiredModule="patients" />
+      <ProtectedRoute path="/patient/:id" component={PatientDetails} requiredModule="patients" />
+      <ProtectedRoute path="/billing" component={BillingCreate} requiredModule="billing" />
+      <ProtectedRoute path="/bills" component={BillingManage} requiredModule="billing" />
+      <ProtectedRoute path="/medicines" component={Medicines} requiredModule="medicines" />
+      <ProtectedRoute path="/treatments" component={Treatments} requiredModule="treatments" />
+      <ProtectedRoute path="/departments" component={Departments} requiredModule="treatments" />
+      <ProtectedRoute path="/expenses" component={Expenses} requiredModule="expenses" />
+      <ProtectedRoute path="/appointments" component={AppointmentMaster} requiredModule="appointments" />
+      <ProtectedRoute path="/reports" component={Reports} requiredModule="reports" />
+      <ProtectedRoute path="/crm" component={CRMDashboard} requiredModule="crm" />
+      <ProtectedRoute path="/crm/leads" component={CRMLeads} requiredModule="crm" />
+      <ProtectedRoute path="/crm/tasks" component={CRMTasks} requiredModule="crm" />
+      <ProtectedRoute path="/users" component={UsersPage} requireSuperAdmin />
       <Route component={NotFound} />
     </Switch>
   );

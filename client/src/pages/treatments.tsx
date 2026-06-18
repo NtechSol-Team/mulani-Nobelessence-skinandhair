@@ -60,6 +60,7 @@ import { extractPaginatedData } from "@/lib/utils";
 import { insertTreatmentSchema } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
 import { z } from "zod";
+import { useAuth } from "@/hooks/use-auth";
 
 const treatmentFormSchema = insertTreatmentSchema;
 
@@ -67,6 +68,10 @@ type TreatmentForm = z.infer<typeof treatmentFormSchema>;
 
 export default function Treatments() {
   const { toast } = useToast();
+  const { user } = useAuth();
+  const canAdd = user?.role === "SuperAdmin" || !!user?.permissions?.treatments?.add;
+  const canEdit = user?.role === "SuperAdmin" || !!user?.permissions?.treatments?.edit;
+  const canDelete = user?.role === "SuperAdmin" || !!user?.permissions?.treatments?.delete;
   const queryClient = useQueryClient();
   const [searchQuery, setSearchQuery] = useState("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -224,173 +229,171 @@ export default function Treatments() {
                   data-testid="input-treatment-search"
                 />
               </div>
-              <Dialog open={isDialogOpen} onOpenChange={(open) => !open && closeDialog()}>
-                <DialogTrigger asChild>
-                  <Button onClick={() => setIsDialogOpen(true)} data-testid="button-add-treatment">
-                    <Plus className="w-4 h-4 mr-2" />
-                    Add Treatment
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>
-                      {editingTreatment ? "Edit Treatment" : "Add New Treatment"}
-                    </DialogTitle>
-                  </DialogHeader>
-                  <Form {...form}>
-                    <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-                      <FormField
-                        control={form.control}
-                        name="name"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Treatment Name</FormLabel>
-                            <FormControl>
-                              <Input
-                                placeholder="Enter treatment name"
-                                {...field}
-                                data-testid="input-treatment-name"
-                              />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        control={form.control}
-                        name="defaultPrice"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Default Price (₹)</FormLabel>
-                            <FormControl>
-                              <Input
-                                type="number"
-                                placeholder="0"
-                                {...field}
-                                onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
-                                data-testid="input-treatment-price"
-                              />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        control={form.control}
-                        name="type"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Type</FormLabel>
-                            <Select
-                              onValueChange={field.onChange}
-                              value={field.value}
-                            >
+              {canAdd && (
+                <Dialog open={isDialogOpen} onOpenChange={(open) => !open && closeDialog()}>
+                  <DialogTrigger asChild>
+                    <Button onClick={() => setIsDialogOpen(true)} data-testid="button-add-treatment">
+                      <Plus className="w-4 h-4 mr-2" />
+                      Add Treatment
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>
+                        {editingTreatment ? "Edit Treatment" : "Add New Treatment"}
+                      </DialogTitle>
+                    </DialogHeader>
+                    <Form {...form}>
+                      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+                        <FormField
+                          control={form.control}
+                          name="name"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Treatment Name</FormLabel>
                               <FormControl>
-                                <SelectTrigger data-testid="select-treatment-type">
-                                  <SelectValue placeholder="Select type" />
-                                </SelectTrigger>
+                                <Input
+                                  placeholder="Enter treatment name"
+                                  {...field}
+                                  data-testid="input-treatment-name"
+                                />
                               </FormControl>
-                              <SelectContent>
-                                <SelectItem value="General">General Treatment</SelectItem>
-                                <SelectItem value="Surgery">Surgery / PRP / Transplant</SelectItem>
-                              </SelectContent>
-                            </Select>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
-                      {form.watch("type") === "Surgery" && (
-                        <div className="border rounded-lg p-4 bg-muted/30 space-y-4">
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm font-semibold">Surgery Equipment</span>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              onClick={() => appendEquipment({ medicineId: "", quantity: 1 })}
-                            >
-                              <Plus className="w-4 h-4 mr-1" />
-                              Add Item
-                            </Button>
-                          </div>
-
-                          {equipmentFields.length === 0 ? (
-                            <p className="text-xs text-muted-foreground text-center py-2">
-                              No associated equipment configured.
-                            </p>
-                          ) : (
-                            <div className="max-h-48 overflow-y-auto space-y-3 pr-1">
-                              {equipmentFields.map((field, index) => (
-                                <div key={field.id} className="flex gap-2 items-end">
-                                  <div className="flex-1">
-                                    <label className="text-xs text-muted-foreground">Select Equipment</label>
-                                    <Select
-                                      onValueChange={(val) => form.setValue(`equipments.${index}.medicineId`, val)}
-                                      value={form.watch(`equipments.${index}.medicineId`)}
-                                    >
-                                      <SelectTrigger>
-                                        <SelectValue placeholder="Select item" />
-                                      </SelectTrigger>
-                                      <SelectContent>
-                                        {medicines
-                                          .filter((m) => m.type === "Equipment")
-                                          .map((m) => (
-                                            <SelectItem key={m.id} value={m.id}>
-                                              {m.name} (Stock: {m.quantity})
-                                            </SelectItem>
-                                          ))}
-                                      </SelectContent>
-                                    </Select>
-                                  </div>
-                                  <div className="w-20">
-                                    <label className="text-xs text-muted-foreground">Qty</label>
-                                    <Input
-                                      type="number"
-                                      min="1"
-                                      {...form.register(`equipments.${index}.quantity` as const, { valueAsNumber: true })}
-                                      className="h-9"
-                                    />
-                                  </div>
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="icon"
-                                    className="text-destructive h-9 w-9"
-                                    onClick={() => removeEquipment(index)}
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                  </Button>
-                                </div>
-                              ))}
-                            </div>
+                              <FormMessage />
+                            </FormItem>
                           )}
+                        />
+
+                        <FormField
+                          control={form.control}
+                          name="defaultPrice"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Default Price (₹)</FormLabel>
+                              <FormControl>
+                                <Input
+                                  type="number"
+                                  placeholder="0"
+                                  {...field}
+                                  onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
+                                  data-testid="input-treatment-price"
+                                />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={form.control}
+                          name="type"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Type</FormLabel>
+                              <Select onValueChange={field.onChange} value={field.value}>
+                                <FormControl>
+                                  <SelectTrigger data-testid="select-treatment-type">
+                                    <SelectValue placeholder="Select type" />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  <SelectItem value="General">General Treatment</SelectItem>
+                                  <SelectItem value="Surgery">Surgery / PRP / Transplant</SelectItem>
+                                </SelectContent>
+                              </Select>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        {form.watch("type") === "Surgery" && (
+                          <div className="border rounded-lg p-4 bg-muted/30 space-y-4">
+                            <div className="flex items-center justify-between">
+                              <span className="text-sm font-semibold">Surgery Equipment</span>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => appendEquipment({ medicineId: "", quantity: 1 })}
+                              >
+                                <Plus className="w-4 h-4 mr-1" />
+                                Add Item
+                              </Button>
+                            </div>
+
+                            {equipmentFields.length === 0 ? (
+                              <p className="text-xs text-muted-foreground text-center py-2">
+                                No associated equipment configured.
+                              </p>
+                            ) : (
+                              <div className="max-h-48 overflow-y-auto space-y-3 pr-1">
+                                {equipmentFields.map((field, index) => (
+                                  <div key={field.id} className="flex gap-2 items-end">
+                                    <div className="flex-1">
+                                      <label className="text-xs text-muted-foreground">Select Equipment</label>
+                                      <Select
+                                        onValueChange={(val) => form.setValue(`equipments.${index}.medicineId`, val)}
+                                        value={form.watch(`equipments.${index}.medicineId`)}
+                                      >
+                                        <SelectTrigger>
+                                          <SelectValue placeholder="Select item" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          {medicines
+                                            .filter((m) => m.type === "Equipment")
+                                            .map((m) => (
+                                              <SelectItem key={m.id} value={m.id}>
+                                                {m.name} (Stock: {m.quantity})
+                                              </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                      </Select>
+                                    </div>
+                                    <div className="w-20">
+                                      <label className="text-xs text-muted-foreground">Qty</label>
+                                      <Input
+                                        type="number"
+                                        min="1"
+                                        {...form.register(`equipments.${index}.quantity` as const, { valueAsNumber: true })}
+                                        className="h-9"
+                                      />
+                                    </div>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon"
+                                      className="text-destructive h-9 w-9"
+                                      onClick={() => removeEquipment(index)}
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </Button>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        <div className="flex justify-end gap-3 pt-2">
+                          <Button type="button" variant="outline" onClick={closeDialog}>
+                            Cancel
+                          </Button>
+                          <Button
+                            type="submit"
+                            disabled={createMutation.isPending || updateMutation.isPending}
+                            data-testid="button-save-treatment"
+                          >
+                            {createMutation.isPending || updateMutation.isPending
+                              ? "Saving..."
+                              : editingTreatment
+                              ? "Update"
+                              : "Add Treatment"}
+                          </Button>
                         </div>
-                      )}
-
-
-                      <div className="flex justify-end gap-3 pt-2">
-                        <Button type="button" variant="outline" onClick={closeDialog}>
-                          Cancel
-                        </Button>
-                        <Button
-                          type="submit"
-                          disabled={createMutation.isPending || updateMutation.isPending}
-                          data-testid="button-save-treatment"
-                        >
-                          {createMutation.isPending || updateMutation.isPending
-                            ? "Saving..."
-                            : editingTreatment
-                            ? "Update"
-                            : "Add Treatment"}
-                        </Button>
-                      </div>
-                    </form>
-                  </Form>
-                </DialogContent>
-              </Dialog>
+                      </form>
+                    </Form>
+                  </DialogContent>
+                </Dialog>
+              )}
             </div>
           </div>
         </CardHeader>
@@ -446,23 +449,27 @@ export default function Treatments() {
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-1">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => openEditDialog(treatment)}
-                            data-testid={`button-edit-treatment-${treatment.id}`}
-                          >
-                            <Edit2 className="w-4 h-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="text-destructive"
-                            onClick={() => setDeletingTreatment(treatment)}
-                            data-testid={`button-delete-treatment-${treatment.id}`}
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
+                          {canEdit && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => openEditDialog(treatment)}
+                              data-testid={`button-edit-treatment-${treatment.id}`}
+                            >
+                              <Edit2 className="w-4 h-4" />
+                            </Button>
+                          )}
+                          {canDelete && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-destructive"
+                              onClick={() => setDeletingTreatment(treatment)}
+                              data-testid={`button-delete-treatment-${treatment.id}`}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          )}
                         </div>
                       </TableCell>
                     </TableRow>

@@ -52,6 +52,7 @@ import { extractPaginatedData } from "@/lib/utils";
 import { insertDepartmentSchema } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
 import { z } from "zod";
+import { useAuth } from "@/hooks/use-auth";
 
 const departmentFormSchema = insertDepartmentSchema;
 
@@ -59,6 +60,10 @@ type DepartmentForm = z.infer<typeof departmentFormSchema>;
 
 export default function Departments() {
   const { toast } = useToast();
+  const { user } = useAuth();
+  const canAdd = user?.role === "SuperAdmin" || !!user?.permissions?.treatments?.add;
+  const canEdit = user?.role === "SuperAdmin" || !!user?.permissions?.treatments?.edit;
+  const canDelete = user?.role === "SuperAdmin" || !!user?.permissions?.treatments?.delete;
   const queryClient = useQueryClient();
   const [searchQuery, setSearchQuery] = useState("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -198,59 +203,61 @@ export default function Departments() {
                   data-testid="input-department-search"
                 />
               </div>
-              <Dialog open={isDialogOpen} onOpenChange={(open) => !open && closeDialog()}>
-                <DialogTrigger asChild>
-                  <Button onClick={() => setIsDialogOpen(true)} data-testid="button-add-department">
-                    <Plus className="w-4 h-4 mr-2" />
-                    Add Department
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>
-                      {editingDepartment ? "Edit Department" : "Add New Department"}
-                    </DialogTitle>
-                  </DialogHeader>
-                  <Form {...form}>
-                    <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-                      <FormField
-                        control={form.control}
-                        name="name"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Department Name</FormLabel>
-                            <FormControl>
-                              <Input
-                                placeholder="e.g. Hair, Skin, Laser"
-                                {...field}
-                                data-testid="input-department-name"
-                              />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
+              {canAdd && (
+                <Dialog open={isDialogOpen} onOpenChange={(open) => !open && closeDialog()}>
+                  <DialogTrigger asChild>
+                    <Button onClick={() => setIsDialogOpen(true)} data-testid="button-add-department">
+                      <Plus className="w-4 h-4 mr-2" />
+                      Add Department
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>
+                        {editingDepartment ? "Edit Department" : "Add New Department"}
+                      </DialogTitle>
+                    </DialogHeader>
+                    <Form {...form}>
+                      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+                        <FormField
+                          control={form.control}
+                          name="name"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Department Name</FormLabel>
+                              <FormControl>
+                                <Input
+                                  placeholder="e.g. Hair, Skin, Laser"
+                                  {...field}
+                                  data-testid="input-department-name"
+                                />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
 
-                      <div className="flex justify-end gap-3 pt-2">
-                        <Button type="button" variant="outline" onClick={closeDialog}>
-                          Cancel
-                        </Button>
-                        <Button
-                          type="submit"
-                          disabled={createMutation.isPending || updateMutation.isPending}
-                          data-testid="button-save-department"
-                        >
-                          {createMutation.isPending || updateMutation.isPending
-                            ? "Saving..."
-                            : editingDepartment
-                            ? "Update"
-                            : "Add Department"}
-                        </Button>
-                      </div>
-                    </form>
-                  </Form>
-                </DialogContent>
-              </Dialog>
+                        <div className="flex justify-end gap-3 pt-2">
+                          <Button type="button" variant="outline" onClick={closeDialog}>
+                            Cancel
+                          </Button>
+                          <Button
+                            type="submit"
+                            disabled={createMutation.isPending || updateMutation.isPending}
+                            data-testid="button-save-department"
+                          >
+                            {createMutation.isPending || updateMutation.isPending
+                              ? "Saving..."
+                              : editingDepartment
+                              ? "Update"
+                              : "Add Department"}
+                          </Button>
+                        </div>
+                      </form>
+                    </Form>
+                  </DialogContent>
+                </Dialog>
+              )}
             </div>
           </div>
         </CardHeader>
@@ -286,23 +293,27 @@ export default function Departments() {
                       <TableCell className="font-medium">{dept.name}</TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-1">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => openEditDialog(dept)}
-                            data-testid={`button-edit-department-${dept.id}`}
-                          >
-                            <Edit2 className="w-4 h-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="text-destructive"
-                            onClick={() => setDeletingDepartment(dept)}
-                            data-testid={`button-delete-department-${dept.id}`}
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
+                          {canEdit && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => openEditDialog(dept)}
+                              data-testid={`button-edit-department-${dept.id}`}
+                            >
+                              <Edit2 className="w-4 h-4" />
+                            </Button>
+                          )}
+                          {canDelete && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-destructive"
+                              onClick={() => setDeletingDepartment(dept)}
+                              data-testid={`button-delete-department-${dept.id}`}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          )}
                         </div>
                       </TableCell>
                     </TableRow>

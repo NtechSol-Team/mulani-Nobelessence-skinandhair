@@ -15,11 +15,11 @@ import {
   insertCRMInteractionSchema,
   insertCRMTaskSchema,
   insertDepartmentSchema,
-  // registerSchema, loginSchema removed with auth
+  registerSchema,
 } from "@shared/schema";
 import { z } from "zod";
 
-import { ensureAuthenticated } from "./auth";
+import { ensureAuthenticated, requireSuperAdmin, checkPermission } from "./auth";
 
 function getLocalDateString(): string {
   const d = new Date();
@@ -43,13 +43,68 @@ export async function registerRoutes(
     }
   });
 
+  // User Management routes for SuperAdmins
+  app.get("/api/users", requireSuperAdmin, async (req, res) => {
+    try {
+      const users = await storage.getUsers();
+      res.json(users);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch users" });
+    }
+  });
+
+  app.post("/api/users", requireSuperAdmin, async (req, res) => {
+    try {
+      const validated = registerSchema.parse(req.body);
+      const existing = await storage.getUserByUsername(validated.username);
+      if (existing) {
+        return res.status(400).json({ error: "Username already exists" });
+      }
+      const user = await storage.createUser(validated);
+      res.status(201).json(user);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors });
+      }
+      res.status(500).json({ error: "Failed to create user" });
+    }
+  });
+
+  app.patch("/api/users/:id", requireSuperAdmin, async (req, res) => {
+    try {
+      const validated = registerSchema.partial().parse(req.body);
+      const user = await storage.updateUser(req.params.id, validated);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      res.json(user);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors });
+      }
+      res.status(500).json({ error: "Failed to update user" });
+    }
+  });
+
+  app.delete("/api/users/:id", requireSuperAdmin, async (req, res) => {
+    try {
+      const success = await storage.deleteUser(req.params.id);
+      if (!success) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete user" });
+    }
+  });
+
   // Protect all API routes registered below
   // Note: /api/login and /api/logout are registered in setupAuth() before this function
   app.use("/api", ensureAuthenticated);
 
   // ==================== PATIENTS ====================
 
-  app.get("/api/patients", async (req, res) => {
+  app.get("/api/patients", checkPermission("patients", "view"), async (req, res) => {
     try {
       const { limit, offset } = paginationSchema.parse(req.query);
       const { data, total } = await storage.getPatientsPaginated(limit, offset);
@@ -62,7 +117,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/patients/:id", async (req, res) => {
+  app.get("/api/patients/:id", checkPermission("patients", "view"), async (req, res) => {
     try {
       const patient = await storage.getPatient(req.params.id);
       if (!patient) {
@@ -74,7 +129,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/patients", async (req, res) => {
+  app.post("/api/patients", checkPermission("patients", "add"), async (req, res) => {
     try {
       const validated = insertPatientSchema.parse(req.body);
       const patient = await storage.createPatient(validated);
@@ -87,7 +142,7 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/patients/:id", async (req, res) => {
+  app.patch("/api/patients/:id", checkPermission("patients", "edit"), async (req, res) => {
     try {
       const validated = insertPatientSchema.parse(req.body);
       const patient = await storage.updatePatient(req.params.id, validated);
@@ -105,7 +160,7 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/patients/:id", async (req, res) => {
+  app.delete("/api/patients/:id", checkPermission("patients", "delete"), async (req, res) => {
     try {
       const deleted = await storage.deletePatient(req.params.id);
       if (!deleted) {
@@ -119,7 +174,7 @@ export async function registerRoutes(
 
   // ==================== VISITS ====================
 
-  app.get("/api/visits", async (req, res) => {
+  app.get("/api/visits", checkPermission("patients", "view"), async (req, res) => {
     try {
       const visits = await storage.getVisits();
       res.json(visits);
@@ -128,7 +183,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/visits/:patientId", async (req, res) => {
+  app.get("/api/visits/:patientId", checkPermission("patients", "view"), async (req, res) => {
     try {
       const visits = await storage.getVisitsByPatient(req.params.patientId);
       res.json(visits);
@@ -137,7 +192,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/visits", async (req, res) => {
+  app.post("/api/visits", checkPermission("patients", "edit"), async (req, res) => {
     try {
       const validated = insertVisitSchema.parse(req.body);
       const visit = await storage.createVisit(validated);
@@ -150,7 +205,7 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/visits/:id", async (req, res) => {
+  app.patch("/api/visits/:id", checkPermission("patients", "edit"), async (req, res) => {
     try {
       const validated = insertVisitSchema.parse(req.body);
       const visit = await storage.updateVisit(req.params.id, validated);
@@ -167,8 +222,7 @@ export async function registerRoutes(
   });
 
   // ==================== MEDICINES ====================
-
-  app.get("/api/medicines", async (req, res) => {
+  app.get("/api/medicines", checkPermission("medicines", "view"), async (req, res) => {
     try {
       const { limit, offset } = paginationSchema.parse(req.query);
       const { data, total } = await storage.getMedicinesPaginated(limit, offset);
@@ -181,7 +235,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/medicines/:id", async (req, res) => {
+  app.get("/api/medicines/:id", checkPermission("medicines", "view"), async (req, res) => {
     try {
       const medicine = await storage.getMedicine(req.params.id);
       if (!medicine) {
@@ -193,7 +247,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/medicines", async (req, res) => {
+  app.post("/api/medicines", checkPermission("medicines", "add"), async (req, res) => {
     try {
       const validated = insertMedicineSchema.parse(req.body);
       const medicine = await storage.createMedicine(validated);
@@ -206,7 +260,7 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/medicines/:id", async (req, res) => {
+  app.patch("/api/medicines/:id", checkPermission("medicines", "edit"), async (req, res) => {
     try {
       const validated = insertMedicineSchema.parse(req.body);
       const medicine = await storage.updateMedicine(req.params.id, validated);
@@ -222,7 +276,7 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/medicines/:id", async (req, res) => {
+  app.delete("/api/medicines/:id", checkPermission("medicines", "delete"), async (req, res) => {
     try {
       const deleted = await storage.deleteMedicine(req.params.id);
       if (!deleted) {
@@ -235,8 +289,7 @@ export async function registerRoutes(
   });
 
   // ==================== TREATMENTS ====================
-
-  app.get("/api/treatments", async (req, res) => {
+  app.get("/api/treatments", checkPermission("treatments", "view"), async (req, res) => {
     try {
       const { limit, offset } = paginationSchema.parse(req.query);
       try {
@@ -259,7 +312,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/treatments/:id", async (req, res) => {
+  app.get("/api/treatments/:id", checkPermission("treatments", "view"), async (req, res) => {
     try {
       const treatment = await storage.getTreatment(req.params.id);
       if (!treatment) {
@@ -271,7 +324,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/treatments", async (req, res) => {
+  app.post("/api/treatments", checkPermission("treatments", "add"), async (req, res) => {
     try {
       const validated = insertTreatmentSchema.parse(req.body);
       const treatment = await storage.createTreatment(validated);
@@ -284,7 +337,7 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/treatments/:id", async (req, res) => {
+  app.patch("/api/treatments/:id", checkPermission("treatments", "edit"), async (req, res) => {
     try {
       const validated = insertTreatmentSchema.parse(req.body);
       const treatment = await storage.updateTreatment(req.params.id, validated);
@@ -300,7 +353,7 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/treatments/:id", async (req, res) => {
+  app.delete("/api/treatments/:id", checkPermission("treatments", "delete"), async (req, res) => {
     try {
       const deleted = await storage.deleteTreatment(req.params.id);
       if (!deleted) {
@@ -314,7 +367,7 @@ export async function registerRoutes(
 
   // ==================== BILLS ====================
 
-  app.get("/api/bills", async (req, res) => {
+  app.get("/api/bills", checkPermission("billing", "view"), async (req, res) => {
     try {
       const { limit, offset } = paginationSchema.parse(req.query);
       const { data, total } = await storage.getBillsPaginated(limit, offset);
@@ -327,7 +380,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/bills/:id", async (req, res) => {
+  app.get("/api/bills/:id", checkPermission("billing", "view"), async (req, res) => {
     try {
       const bill = await storage.getBill(req.params.id);
       if (!bill) {
@@ -339,7 +392,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/bills", async (req, res) => {
+  app.post("/api/bills", checkPermission("billing", "add"), async (req, res) => {
     try {
       const validated = insertBillSchema.parse(req.body);
 
@@ -374,7 +427,7 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/bills/:id", async (req, res) => {
+  app.patch("/api/bills/:id", checkPermission("billing", "edit"), async (req, res) => {
     try {
       const validated = insertBillSchema.parse(req.body);
 
@@ -475,7 +528,7 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/bills/:id/payment", async (req, res) => {
+  app.patch("/api/bills/:id/payment", checkPermission("billing", "edit"), async (req, res) => {
     try {
       const { addAmount, setAmount, paymentMode } = req.body;
 
@@ -539,7 +592,7 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/bills/:id", async (req, res) => {
+  app.delete("/api/bills/:id", checkPermission("billing", "delete"), async (req, res) => {
     try {
       const bill = await storage.getBill(req.params.id);
       if (!bill) {
@@ -578,7 +631,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/payment-ledgers", async (req, res) => {
+  app.get("/api/payment-ledgers", checkPermission("billing", "view"), async (req, res) => {
     try {
       const ledgers = await storage.getPaymentLedgers();
       res.json(ledgers);
@@ -589,8 +642,7 @@ export async function registerRoutes(
   });
 
   // ==================== EXPENSES ====================
-
-  app.get("/api/expenses", async (req, res) => {
+  app.get("/api/expenses", checkPermission("expenses", "view"), async (req, res) => {
     try {
       const { limit, offset } = paginationSchema.parse(req.query);
       const { data, total } = await storage.getExpensesPaginated(limit, offset);
@@ -603,7 +655,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/expenses/:id", async (req, res) => {
+  app.get("/api/expenses/:id", checkPermission("expenses", "view"), async (req, res) => {
     try {
       const expense = await storage.getExpense(req.params.id);
       if (!expense) {
@@ -615,7 +667,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/expenses", async (req, res) => {
+  app.post("/api/expenses", checkPermission("expenses", "add"), async (req, res) => {
     try {
       const validated = insertExpenseSchema.parse(req.body);
       const expense = await storage.createExpense(validated);
@@ -628,7 +680,7 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/expenses/:id", async (req, res) => {
+  app.patch("/api/expenses/:id", checkPermission("expenses", "edit"), async (req, res) => {
     try {
       const validated = insertExpenseSchema.parse(req.body);
       const expense = await storage.updateExpense(req.params.id, validated);
@@ -644,7 +696,7 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/expenses/:id", async (req, res) => {
+  app.delete("/api/expenses/:id", checkPermission("expenses", "delete"), async (req, res) => {
     try {
       const deleted = await storage.deleteExpense(req.params.id);
       if (!deleted) {
@@ -657,8 +709,7 @@ export async function registerRoutes(
   });
 
   // ==================== APPOINTMENTS ====================
-
-  app.get("/api/appointments", async (req, res) => {
+  app.get("/api/appointments", checkPermission("appointments", "view"), async (req, res) => {
     try {
       const appointments = await storage.getAppointments();
       res.json(appointments);
@@ -667,7 +718,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/appointments/patient/:patientId", async (req, res) => {
+  app.get("/api/appointments/patient/:patientId", checkPermission("appointments", "view"), async (req, res) => {
     try {
       const appointments = await storage.getAppointmentsByPatient(req.params.patientId);
       res.json(appointments);
@@ -676,7 +727,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/appointments/:id", async (req, res) => {
+  app.get("/api/appointments/:id", checkPermission("appointments", "view"), async (req, res) => {
     try {
       const appointment = await storage.getAppointment(req.params.id);
       if (!appointment) {
@@ -688,7 +739,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/appointments", async (req, res) => {
+  app.post("/api/appointments", checkPermission("appointments", "add"), async (req, res) => {
     try {
       console.log("Creating appointment with body:", req.body);
       const validated = insertAppointmentSchema.parse(req.body);
@@ -703,7 +754,7 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/appointments/:id", async (req, res) => {
+  app.patch("/api/appointments/:id", checkPermission("appointments", "edit"), async (req, res) => {
     try {
       const validated = insertAppointmentSchema.parse(req.body);
       const appointment = await storage.updateAppointment(req.params.id, validated);
@@ -719,7 +770,7 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/appointments/:id", async (req, res) => {
+  app.delete("/api/appointments/:id", checkPermission("appointments", "delete"), async (req, res) => {
     try {
       const deleted = await storage.deleteAppointment(req.params.id);
       if (!deleted) {
@@ -732,8 +783,7 @@ export async function registerRoutes(
   });
 
   // ==================== CRM - LEADS ====================
-
-  app.get("/api/crm/leads", async (req, res) => {
+  app.get("/api/crm/leads", checkPermission("crm", "view"), async (req, res) => {
     try {
       const leads = await storage.getLeads();
       res.json(leads);
@@ -742,7 +792,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/crm/leads/:id", async (req, res) => {
+  app.get("/api/crm/leads/:id", checkPermission("crm", "view"), async (req, res) => {
     try {
       const lead = await storage.getLead(req.params.id);
       if (!lead) {
@@ -754,7 +804,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/crm/leads", async (req, res) => {
+  app.post("/api/crm/leads", checkPermission("crm", "add"), async (req, res) => {
     try {
       const validated = insertLeadSchema.parse(req.body);
       const lead = await storage.createLead(validated);
@@ -769,7 +819,7 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/crm/leads/:id", async (req, res) => {
+  app.patch("/api/crm/leads/:id", checkPermission("crm", "edit"), async (req, res) => {
     try {
       const validated = insertLeadSchema.parse(req.body);
       const lead = await storage.updateLead(req.params.id, validated);
@@ -787,7 +837,7 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/crm/leads/:id", async (req, res) => {
+  app.delete("/api/crm/leads/:id", checkPermission("crm", "delete"), async (req, res) => {
     try {
       const deleted = await storage.deleteLead(req.params.id);
       if (!deleted) {
@@ -800,8 +850,7 @@ export async function registerRoutes(
   });
 
   // ==================== CRM - INTERACTIONS ====================
-
-  app.get("/api/crm/interactions", async (req, res) => {
+  app.get("/api/crm/interactions", checkPermission("crm", "view"), async (req, res) => {
     try {
       const patientId = req.query.patientId as string | undefined;
       const leadId = req.query.leadId as string | undefined;
@@ -812,7 +861,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/crm/interactions", async (req, res) => {
+  app.post("/api/crm/interactions", checkPermission("crm", "add"), async (req, res) => {
     try {
       const validated = insertCRMInteractionSchema.parse(req.body);
       const interaction = await storage.createInteraction(validated);
@@ -825,7 +874,7 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/crm/interactions/:id", async (req, res) => {
+  app.patch("/api/crm/interactions/:id", checkPermission("crm", "edit"), async (req, res) => {
     try {
       const validated = insertCRMInteractionSchema.partial().parse(req.body);
       const interaction = await storage.updateInteraction(req.params.id, validated);
@@ -842,8 +891,7 @@ export async function registerRoutes(
   });
 
   // ==================== CRM - TASKS ====================
-
-  app.get("/api/crm/tasks", async (req, res) => {
+  app.get("/api/crm/tasks", checkPermission("crm", "view"), async (req, res) => {
     try {
       const tasks = await storage.getCRMTasks();
       res.json(tasks);
@@ -852,7 +900,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/crm/tasks", async (req, res) => {
+  app.post("/api/crm/tasks", checkPermission("crm", "add"), async (req, res) => {
     try {
       const validated = insertCRMTaskSchema.parse(req.body);
       const task = await storage.createCRMTask(validated);
@@ -865,7 +913,7 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/crm/tasks/:id", async (req, res) => {
+  app.patch("/api/crm/tasks/:id", checkPermission("crm", "edit"), async (req, res) => {
     try {
       const { status } = req.body;
       if (status !== "Pending" && status !== "Completed") {
@@ -881,7 +929,7 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/crm/tasks/:id", async (req, res) => {
+  app.delete("/api/crm/tasks/:id", checkPermission("crm", "delete"), async (req, res) => {
     try {
       const deleted = await storage.deleteCRMTask(req.params.id);
       if (!deleted) {
@@ -894,8 +942,7 @@ export async function registerRoutes(
   });
 
   // ==================== CRM - STATS & ANALYTICS ====================
-
-  app.get("/api/crm/stats", async (req, res) => {
+  app.get("/api/crm/stats", checkPermission("crm", "view"), async (req, res) => {
     try {
       const leads = await storage.getLeads();
       const patients = await storage.getPatients();
@@ -981,7 +1028,7 @@ export async function registerRoutes(
   });
 
   // ==================== DEPARTMENTS ====================
-  app.get("/api/departments", async (req, res) => {
+  app.get("/api/departments", checkPermission("treatments", "view"), async (req, res) => {
     try {
       const depts = await storage.getDepartments();
       res.json(depts);
@@ -990,7 +1037,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/departments", async (req, res) => {
+  app.post("/api/departments", checkPermission("treatments", "add"), async (req, res) => {
     try {
       const validated = insertDepartmentSchema.parse(req.body);
       const dept = await storage.createDepartment(validated);
@@ -1003,7 +1050,7 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/departments/:id", async (req, res) => {
+  app.patch("/api/departments/:id", checkPermission("treatments", "edit"), async (req, res) => {
     try {
       const validated = insertDepartmentSchema.parse(req.body);
       const dept = await storage.updateDepartment(req.params.id, validated);
@@ -1019,7 +1066,7 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/departments/:id", async (req, res) => {
+  app.delete("/api/departments/:id", checkPermission("treatments", "delete"), async (req, res) => {
     try {
       const success = await storage.deleteDepartment(req.params.id);
       if (!success) {

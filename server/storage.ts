@@ -126,10 +126,23 @@ export interface IStorage {
   ping(): Promise<boolean>;
 
   // Users/Auth
-  // Authentication removed
+  getUsers(): Promise<User[]>;
+  getUser(id: string): Promise<User | undefined>;
+  getUserByUsername(username: string): Promise<User | undefined>;
+  getUserByUsernameRow(username: string): Promise<any | undefined>;
+  createUser(user: RegisterInput): Promise<User>;
+  updateUser(id: string, user: Partial<RegisterInput>): Promise<User | undefined>;
+  deleteUser(id: string): Promise<boolean>;
 }
 
-// User table and auth-related types removed
+type DbUserRow = {
+  id: string | number;
+  username: string;
+  password: string;
+  role: string;
+  permissions?: any;
+  created_at: string;
+};
 
 type DbPatientRow = {
   id: string | number;
@@ -356,6 +369,14 @@ const createTableStatements = [
   )`,
   `CREATE INDEX IF NOT EXISTS crm_tasks_patient_idx ON crm_tasks(patient_id)`,
   `CREATE INDEX IF NOT EXISTS crm_tasks_lead_idx ON crm_tasks(lead_id)`,
+  `CREATE TABLE IF NOT EXISTS users (
+    id UUID PRIMARY KEY,
+    username TEXT NOT NULL UNIQUE,
+    password TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'Staff',
+    permissions JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  )`,
 ];
 
 async function ensureTables(): Promise<void> {
@@ -466,7 +487,7 @@ class DataCache {
   }
 }
 
-type EntityTable = "patients" | "visits" | "medicines" | "treatments" | "bills" | "expenses" | "appointments" | "payment_ledger" | "leads" | "crm_interactions" | "crm_tasks" | "departments";
+type EntityTable = "patients" | "visits" | "medicines" | "treatments" | "bills" | "expenses" | "appointments" | "payment_ledger" | "leads" | "crm_interactions" | "crm_tasks" | "departments" | "users";
 type IdMode = "numeric" | "text";
 
 async function getColumnDataType(table: string, column: string): Promise<string | undefined> {
@@ -480,7 +501,7 @@ async function getColumnDataType(table: string, column: string): Promise<string 
 }
 
 async function detectIdModes(): Promise<Record<EntityTable, IdMode>> {
-  const tables: EntityTable[] = ["patients", "visits", "medicines", "treatments", "bills", "expenses", "appointments", "payment_ledger", "leads", "crm_interactions", "crm_tasks", "departments"];
+  const tables: EntityTable[] = ["patients", "visits", "medicines", "treatments", "bills", "expenses", "appointments", "payment_ledger", "leads", "crm_interactions", "crm_tasks", "departments", "users"];
   const entries = await Promise.all(
     tables.map(async (table) => {
       const dataType = await getColumnDataType(table, "id");
@@ -493,7 +514,13 @@ async function detectIdModes(): Promise<Record<EntityTable, IdMode>> {
 
 const normalizeId = (value: string | number): string => value.toString();
 
-// mapUser removed
+const mapUser = (row: DbUserRow): User => ({
+  id: normalizeId(row.id),
+  username: row.username,
+  role: (row.role || "Staff") as "SuperAdmin" | "Staff",
+  permissions: row.permissions || {},
+  createdAt: row.created_at,
+});
 
 const mapPatient = (row: DbPatientRow): Patient => ({
   id: normalizeId(row.id),
@@ -715,6 +742,8 @@ export class PostgresStorage implements IStorage {
         return this.idModes.crm_interactions === "numeric";
       case "crm_tasks":
         return this.idModes.crm_tasks === "numeric";
+      case "users":
+        return this.idModes.users === "numeric";
       default:
         return false;
     }
@@ -2327,8 +2356,109 @@ export class PostgresStorage implements IStorage {
     return true;
   }
 
-  // Users/Auth
-  // Authentication methods removed
+  async getUsers(): Promise<User[]> {
+    await this.waitForReady();
+    const { rows } = await pool.query<DbUserRow>(
+      "SELECT id, username, password, role, permissions, created_at FROM users ORDER BY username ASC"
+    );
+    return rows.map(mapUser);
+  }
+
+  async getUser(id: string): Promise<User | undefined> {
+    await this.waitForReady();
+    const dbId = this.convertId("users", id);
+    const { rows } = await pool.query<DbUserRow>(
+      "SELECT id, username, password, role, permissions, created_at FROM users WHERE id = $1",
+      [dbId]
+    );
+    return rows[0] ? mapUser(rows[0]) : undefined;
+  }
+
+  async getUserByUsername(username: string): Promise<User | undefined> {
+    await this.waitForReady();
+    const { rows } = await pool.query<DbUserRow>(
+      "SELECT id, username, password, role, permissions, created_at FROM users WHERE username = $1",
+      [username]
+    );
+    return rows[0] ? mapUser(rows[0]) : undefined;
+  }
+
+  async getUserByUsernameRow(username: string): Promise<any | undefined> {
+    await this.waitForReady();
+    const { rows } = await pool.query<DbUserRow>(
+      "SELECT id, username, password, role, permissions, created_at FROM users WHERE username = $1",
+      [username]
+    );
+    return rows[0] ? {
+      id: normalizeId(rows[0].id),
+      username: rows[0].username,
+      password_hash: rows[0].password, // plain text password mapped to password_hash field
+      role: rows[0].role,
+      permissions: rows[0].permissions || {},
+      createdAt: rows[0].created_at,
+    } : undefined;
+  }
+
+  async createUser(insert: RegisterInput): Promise<User> {
+    await this.waitForReady();
+    const useNumericId = this.usesNumericId("users");
+    const query = useNumericId
+      ? `INSERT INTO users(username, password, role, permissions)
+         VALUES($1, $2, $3, $4)
+         RETURNING id, username, password, role, permissions, created_at`
+      : `INSERT INTO users(id, username, password, role, permissions)
+         VALUES($1, $2, $3, $4, $5)
+         RETURNING id, username, password, role, permissions, created_at`;
+
+    const params = useNumericId
+      ? [insert.username, insert.password, insert.role || "Staff", JSON.stringify(insert.permissions || {})]
+      : [randomUUID(), insert.username, insert.password, insert.role || "Staff", JSON.stringify(insert.permissions || {})];
+
+    const { rows } = await pool.query<DbUserRow>(query, params);
+    return mapUser(rows[0]);
+  }
+
+  async updateUser(id: string, update: Partial<RegisterInput>): Promise<User | undefined> {
+    await this.waitForReady();
+    const dbId = this.convertId("users", id);
+    
+    // Dynamically build update query
+    const fields: string[] = [];
+    const values: any[] = [dbId];
+    let placeholderIndex = 2;
+
+    if (update.username !== undefined) {
+      fields.push(`username = $${placeholderIndex++}`);
+      values.push(update.username);
+    }
+    if (update.password !== undefined) {
+      fields.push(`password = $${placeholderIndex++}`);
+      values.push(update.password);
+    }
+    if (update.role !== undefined) {
+      fields.push(`role = $${placeholderIndex++}`);
+      values.push(update.role);
+    }
+    if (update.permissions !== undefined) {
+      fields.push(`permissions = $${placeholderIndex++}`);
+      values.push(JSON.stringify(update.permissions));
+    }
+
+    if (fields.length === 0) {
+      return this.getUser(id);
+    }
+
+    const query = `UPDATE users SET ${fields.join(", ")} WHERE id = $1 RETURNING id, username, password, role, permissions, created_at`;
+    const { rows } = await pool.query<DbUserRow>(query, values);
+    return rows[0] ? mapUser(rows[0]) : undefined;
+  }
+
+  async deleteUser(id: string): Promise<boolean> {
+    await this.waitForReady();
+    const dbId = this.convertId("users", id);
+    const result = await pool.query("DELETE FROM users WHERE id = $1", [dbId]);
+    return (result.rowCount ?? 0) > 0;
+  }
 }
 
 export const storage = new PostgresStorage();

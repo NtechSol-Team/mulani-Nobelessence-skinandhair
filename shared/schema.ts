@@ -4,12 +4,21 @@ import { z } from "zod";
 export interface User {
   id: string;
   username: string;
+  role: "SuperAdmin" | "Staff";
+  permissions?: Record<string, { view: boolean; add: boolean; edit: boolean; delete: boolean }>;
   createdAt: string;
 }
 
 export const registerSchema = z.object({
   username: z.string().min(3, "Username must be at least 3 characters").max(50),
   password: z.string().min(6, "Password must be at least 6 characters"),
+  role: z.enum(["SuperAdmin", "Staff"]).default("Staff"),
+  permissions: z.record(z.object({
+    view: z.boolean().default(false),
+    add: z.boolean().default(false),
+    edit: z.boolean().default(false),
+    delete: z.boolean().default(false),
+  })).optional().default({}),
 });
 
 export type RegisterInput = z.infer<typeof registerSchema>;

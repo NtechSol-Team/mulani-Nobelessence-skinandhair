@@ -4,11 +4,9 @@ import { Express } from "express";
 import session from "express-session";
 import createMemoryStore from "memorystore";
 import { User, registerSchema } from "@shared/schema";
+import { storage } from "./storage";
 
-// Helper to compare strings safely if we were using a real DB, 
-// for now we match against env vars as requested.
-// In a real app, use bcrypt.compare
-function verifyCredentials(username: string, password: string): User | null {
+async function verifyCredentials(username: string, password: string): Promise<User | null> {
     const adminUser = process.env.ADMIN_USERNAME || "Admin";
     const adminPass = process.env.ADMIN_PASSWORD || "Dr.Admin";
 
@@ -16,7 +14,20 @@ function verifyCredentials(username: string, password: string): User | null {
         return {
             id: "1",
             username: adminUser,
+            role: "SuperAdmin",
             createdAt: new Date().toISOString(),
+        };
+    }
+
+    // Check DB users
+    const userRow = await storage.getUserByUsernameRow(username);
+    if (userRow && userRow.password_hash === password) {
+        return {
+            id: userRow.id,
+            username: userRow.username,
+            role: userRow.role as "SuperAdmin" | "Staff",
+            permissions: userRow.permissions,
+            createdAt: userRow.createdAt,
         };
     }
     return null;
@@ -48,7 +59,7 @@ export function setupAuth(app: Express) {
     passport.use(
         new LocalStrategy(async (username, password, done) => {
             try {
-                const user = verifyCredentials(username, password);
+                const user = await verifyCredentials(username, password);
                 if (!user) {
                     return done(null, false, { message: "Invalid username or password" });
                 }
@@ -63,14 +74,26 @@ export function setupAuth(app: Express) {
         done(null, (user as User).id);
     });
 
-    passport.deserializeUser((id, done) => {
-        // In a real app we would look up by ID. 
-        // Here we just return the admin user object if ID matches.
+    passport.deserializeUser(async (id: string, done) => {
         if (id === "1") {
-            const adminUser = process.env.ADMIN_USERNAME || "admin";
-            done(null, { id: "1", username: adminUser } as User);
+            const adminUser = process.env.ADMIN_USERNAME || "Admin";
+            done(null, {
+                id: "1",
+                username: adminUser,
+                role: "SuperAdmin",
+                createdAt: new Date().toISOString()
+            } as User);
         } else {
-            done(null, false);
+            try {
+                const user = await storage.getUser(id);
+                if (user) {
+                    done(null, user);
+                } else {
+                    done(null, false);
+                }
+            } catch (err) {
+                done(err);
+            }
         }
     });
 
@@ -114,4 +137,27 @@ export function ensureAuthenticated(req: any, res: any, next: any) {
         return next();
     }
     res.status(401).json({ message: "Not authenticated" });
+}
+
+export function requireSuperAdmin(req: any, res: any, next: any) {
+    if (req.isAuthenticated() && req.user.role === "SuperAdmin") {
+        return next();
+    }
+    res.status(403).json({ error: "Access denied. SuperAdmin role required." });
+}
+
+export function checkPermission(permission: string, action: "view" | "add" | "edit" | "delete") {
+    return (req: any, res: any, next: any) => {
+        if (!req.isAuthenticated()) {
+            return res.status(401).json({ error: "Not authenticated" });
+        }
+        if (req.user.role === "SuperAdmin") {
+            return next();
+        }
+        const permissions = req.user.permissions || {};
+        if (permissions[permission]?.[action]) {
+            return next();
+        }
+        res.status(403).json({ error: `Access denied. Requires ${permission}.${action} permission.` });
+    };
 }
