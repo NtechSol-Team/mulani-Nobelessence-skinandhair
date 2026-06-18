@@ -79,6 +79,7 @@ const appointmentFormSchema = z.object({
     time: z.string().default("09:00"),
     reason: z.string().optional().default(""),
     status: z.enum(["Scheduled", "Completed", "Cancelled"]).default("Scheduled"),
+    type: z.enum(["New", "Follow-up"]).default("New"),
 }).superRefine((data, ctx) => {
     if (data.isNewPatient) {
         if (!data.newPatientName || data.newPatientName.trim().length === 0) {
@@ -141,6 +142,7 @@ export default function AppointmentMaster() {
             time: "09:00",
             reason: "",
             status: "Scheduled",
+            type: "New",
         },
     });
 
@@ -219,6 +221,7 @@ export default function AppointmentMaster() {
             time: "09:00",
             reason: "",
             status: "Scheduled",
+            type: "New",
         });
     };
 
@@ -233,6 +236,7 @@ export default function AppointmentMaster() {
             time: appointment.time,
             reason: appointment.reason,
             status: appointment.status as "Scheduled" | "Completed" | "Cancelled",
+            type: appointment.type || "New",
         });
         setIsDialogOpen(true);
     };
@@ -265,6 +269,7 @@ export default function AppointmentMaster() {
                 time: data.time,
                 reason: data.reason,
                 status: data.status,
+                type: data.type,
             };
 
             if (editingAppointment) {
@@ -456,6 +461,7 @@ Primecare Skin & Health`;
                                                                 time: appt.time,
                                                                 reason: appt.reason,
                                                                 status: "Completed",
+                                                                type: appt.type,
                                                             };
                                                             await updateMutation.mutateAsync({ id: appt.id, data: appointmentData }).catch(() => {});
                                                         }
@@ -464,8 +470,17 @@ Primecare Skin & Health`;
                                                 />
                                             </div>
                                             <div>
-                                                <div className={`font-medium ${appt.status === "Completed" ? "line-through text-muted-foreground" : ""}`}>
-                                                    {appt.patientName || patients.find(p => p.id === appt.patientId)?.name || "Unknown Patient"}
+                                                <div className={`font-medium flex items-center gap-1.5 ${appt.status === "Completed" ? "line-through text-muted-foreground" : ""}`}>
+                                                    <span>{appt.patientName || patients.find(p => p.id === appt.patientId)?.name || "Unknown Patient"}</span>
+                                                    {appt.type && (
+                                                        <Badge variant="outline" className={`text-[9px] px-1 py-0 h-4 ${
+                                                            appt.type === "Follow-up"
+                                                                ? "bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-50"
+                                                                : "bg-teal-50 text-teal-700 border-teal-200 hover:bg-teal-50"
+                                                        }`}>
+                                                            {appt.type}
+                                                        </Badge>
+                                                    )}
                                                 </div>
                                                 <div className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
                                                     <Clock className="w-3 h-3 text-muted-foreground" />
@@ -761,7 +776,7 @@ Primecare Skin & Health`;
                                                         <FormLabel>Status</FormLabel>
                                                         <Select
                                                             onValueChange={field.onChange}
-                                                            defaultValue={field.value}
+                                                            value={field.value}
                                                         >
                                                             <FormControl>
                                                                 <SelectTrigger>
@@ -772,6 +787,31 @@ Primecare Skin & Health`;
                                                                 <SelectItem value="Scheduled">Scheduled</SelectItem>
                                                                 <SelectItem value="Completed">Completed</SelectItem>
                                                                 <SelectItem value="Cancelled">Cancelled</SelectItem>
+                                                            </SelectContent>
+                                                        </Select>
+                                                        <FormMessage />
+                                                    </FormItem>
+                                                )}
+                                            />
+
+                                            <FormField
+                                                control={form.control}
+                                                name="type"
+                                                render={({ field }) => (
+                                                    <FormItem>
+                                                        <FormLabel>Appointment Tag</FormLabel>
+                                                        <Select
+                                                            onValueChange={field.onChange}
+                                                            value={field.value || "New"}
+                                                        >
+                                                            <FormControl>
+                                                                <SelectTrigger>
+                                                                    <SelectValue placeholder="Select type" />
+                                                                </SelectTrigger>
+                                                            </FormControl>
+                                                            <SelectContent>
+                                                                <SelectItem value="New">New</SelectItem>
+                                                                <SelectItem value="Follow-up">Follow-up</SelectItem>
                                                             </SelectContent>
                                                         </Select>
                                                         <FormMessage />
@@ -914,8 +954,17 @@ function AppointmentsTable({ appointments, patients, getStatusBadge, onEdit, onD
                                 </div>
                             </TableCell>
                             <TableCell>
-                                <div className="font-medium">
-                                    {appt.patientName || "Unknown Patient"}
+                                <div className="flex items-center gap-2">
+                                    <span className="font-medium">{appt.patientName || "Unknown Patient"}</span>
+                                    {appt.type && (
+                                        <Badge variant="outline" className={`text-[10px] px-1.5 py-0 h-5 ${
+                                            appt.type === "Follow-up"
+                                                ? "bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-50"
+                                                : "bg-teal-50 text-teal-700 border-teal-200 hover:bg-teal-50"
+                                        }`}>
+                                            {appt.type}
+                                        </Badge>
+                                    )}
                                 </div>
                             </TableCell>
                             <TableCell>{appt.reason}</TableCell>

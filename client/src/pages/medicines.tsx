@@ -193,7 +193,7 @@ export default function Medicines() {
     m.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const lowStockMedicines = medicines.filter((m) => m.quantity <= 10);
+  const lowStockMedicines = medicines.filter((m) => m.quantity <= 3);
   const totalStockValue = medicines.reduce(
     (sum, m) => sum + m.purchaseCost * m.quantity,
     0
@@ -498,7 +498,7 @@ export default function Medicines() {
                           </span>
                         </TableCell>
                         <TableCell className="text-right">
-                          {medicine.quantity <= 10 ? (
+                          {medicine.quantity <= 3 ? (
                             <Badge variant="destructive">{medicine.quantity}</Badge>
                           ) : (
                             <Badge variant="secondary">{medicine.quantity}</Badge>

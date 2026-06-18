@@ -18,6 +18,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import type {
   Patient,
@@ -43,6 +50,13 @@ export default function BillingCreate() {
   const [discountType, setDiscountType] = useState<"Percentage" | "INR">("Percentage");
   const [amountPaid, setAmountPaid] = useState("");
   const [paymentMode, setPaymentMode] = useState<"Cash" | "Online">("Cash");
+
+  const [showFollowUpDialog, setShowFollowUpDialog] = useState(false);
+  const [followUpPatientInfo, setFollowUpPatientInfo] = useState<{ id: string; name: string } | null>(null);
+  const [followUpDate, setFollowUpDate] = useState(format(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), "yyyy-MM-dd"));
+  const [followUpTime, setFollowUpTime] = useState("09:00");
+  const [followUpReason, setFollowUpReason] = useState("Follow-up");
+  const [isScheduling, setIsScheduling] = useState(false);
 
   const { data: patientsResponse, isLoading: patientsLoading } = useQuery({
     queryKey: ["/api/patients"],
@@ -122,9 +136,17 @@ export default function BillingCreate() {
         title: "Bill Created",
         description: "Bill has been saved successfully.",
       });
-      resetForm();
-      // Force page reload as requested
-      window.location.reload();
+      if (selectedPatient) {
+        setFollowUpPatientInfo({
+          id: selectedPatient.id,
+          name: selectedPatient.name,
+        });
+        resetForm();
+        setShowFollowUpDialog(true);
+      } else {
+        resetForm();
+        window.location.reload();
+      }
     },
     onError: (error: Error) => {
       toast({
@@ -134,6 +156,41 @@ export default function BillingCreate() {
       });
     },
   });
+
+  const handleScheduleFollowUp = async () => {
+    if (!followUpPatientInfo) return;
+    try {
+      setIsScheduling(true);
+      const appointmentData = {
+        patientId: followUpPatientInfo.id,
+        date: followUpDate,
+        time: followUpTime,
+        reason: followUpReason,
+        status: "Scheduled",
+        type: "Follow-up",
+      };
+      await apiRequest("POST", "/api/appointments", appointmentData);
+      toast({
+        title: "Follow-up Scheduled",
+        description: `Follow-up appointment scheduled for ${followUpPatientInfo.name}.`,
+      });
+      setShowFollowUpDialog(false);
+      window.location.reload();
+    } catch (error: any) {
+      toast({
+        title: "Failed to Schedule",
+        description: error.message || "An error occurred",
+        variant: "destructive",
+      });
+    } finally {
+      setIsScheduling(false);
+    }
+  };
+
+  const handleSkipFollowUp = () => {
+    setShowFollowUpDialog(false);
+    window.location.reload();
+  };
 
   const resetForm = () => {
     setSelectedPatient(null);
@@ -638,6 +695,51 @@ export default function BillingCreate() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={showFollowUpDialog} onOpenChange={(open) => !open && handleSkipFollowUp()}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Schedule Follow-Up Appointment</DialogTitle>
+            <DialogDescription>
+              Schedule next follow-up visit for <span className="font-semibold text-foreground">{followUpPatientInfo?.name}</span>.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Follow-Up Date</label>
+              <Input
+                type="date"
+                value={followUpDate}
+                onChange={(e) => setFollowUpDate(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Time</label>
+              <Input
+                type="time"
+                value={followUpTime}
+                onChange={(e) => setFollowUpTime(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Reason</label>
+              <Input
+                placeholder="Reason (e.g. follow-up)"
+                value={followUpReason}
+                onChange={(e) => setFollowUpReason(e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="flex justify-end gap-3 pt-2">
+            <Button type="button" variant="outline" onClick={handleSkipFollowUp} disabled={isScheduling}>
+              Skip / Do Later
+            </Button>
+            <Button type="button" onClick={handleScheduleFollowUp} disabled={isScheduling}>
+              {isScheduling ? "Scheduling..." : "Schedule Follow-up"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

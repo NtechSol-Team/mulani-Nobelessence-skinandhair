@@ -72,6 +72,9 @@ export default function BillingManage() {
   const [isEditBillDialogOpen, setIsEditBillDialogOpen] = useState(false);
   const [editingTreatments, setEditingTreatments] = useState<BillTreatmentItem[]>([]);
   const [editingMedicines, setEditingMedicines] = useState<BillMedicineItem[]>([]);
+  const [editingDiscount, setEditingDiscount] = useState("");
+  const [editingDiscountType, setEditingDiscountType] = useState<"Percentage" | "INR">("Percentage");
+  const [editingBillDate, setEditingBillDate] = useState("");
   const [dateFilter, setDateFilter] = useState("current-month");
   const [customStartDate, setCustomStartDate] = useState<string>("");
   const [customEndDate, setCustomEndDate] = useState<string>("");
@@ -125,10 +128,16 @@ export default function BillingManage() {
       billId,
       treatments,
       medicines,
+      discount,
+      discountType,
+      date,
     }: {
       billId: string;
       treatments: BillTreatmentItem[];
       medicines: BillMedicineItem[];
+      discount: number;
+      discountType: "Percentage" | "INR";
+      date: string;
     }) => {
       const treatmentTotal = treatments.reduce((sum, t) => sum + t.price, 0);
       const medicineTotal = medicines.reduce((sum, m) => sum + m.total, 0);
@@ -136,24 +145,23 @@ export default function BillingManage() {
 
       if (!billToEdit) throw new Error("Bill not found");
 
-      const billDiscountValue = billToEdit.discount || 0;
-      const billDiscountAmount = billToEdit.discountType === "Percentage"
-        ? (grandTotal * billDiscountValue) / 100
-        : billDiscountValue;
+      const billDiscountAmount = discountType === "Percentage"
+        ? (grandTotal * discount) / 100
+        : discount;
       const finalAmount = Math.max(0, grandTotal - billDiscountAmount);
 
       return await apiRequest("PATCH", `/api/bills/${billId}`, {
         patientId: billToEdit.patientId,
-        date: billToEdit.date,
+        date,
         treatments,
         medicines,
         treatmentTotal,
         medicineTotal,
         grandTotal,
-        discount: billToEdit.discount,
-        discountType: billToEdit.discountType || "Percentage",
+        discount,
+        discountType,
         finalAmount,
-        amountPaid: billToEdit.amountPaid,
+        amountPaid: Math.min(billToEdit.amountPaid, finalAmount),
       });
     },
     onSuccess: () => {
@@ -167,6 +175,9 @@ export default function BillingManage() {
       setBillToEdit(null);
       setEditingTreatments([]);
       setEditingMedicines([]);
+      setEditingDiscount("");
+      setEditingDiscountType("Percentage");
+      setEditingBillDate("");
     },
     onError: (error: Error) => {
       toast({
@@ -203,7 +214,14 @@ export default function BillingManage() {
   const openEditBillDialog = (bill: Bill) => {
     setBillToEdit(bill);
     setEditingTreatments([...bill.treatments]);
-    setEditingMedicines([...bill.medicines]);
+    setEditingMedicines(bill.medicines.map(m => ({
+      ...m,
+      discountPercent: m.discountPercent || 0,
+      discount: m.discount || 0,
+    })));
+    setEditingDiscount(bill.discount ? bill.discount.toString() : "");
+    setEditingDiscountType(bill.discountType || "Percentage");
+    setEditingBillDate(bill.date);
     setIsEditBillDialogOpen(true);
   };
 
@@ -239,6 +257,8 @@ export default function BillingManage() {
         medicineName: "",
         quantity: 1,
         unitPrice: 0,
+        discountPercent: 0,
+        discount: 0,
         total: 0,
       },
     ]);
@@ -253,6 +273,8 @@ export default function BillingManage() {
         medicineName: medicine.name,
         quantity: 1,
         unitPrice: medicine.sellingPrice,
+        discountPercent: 0,
+        discount: 0,
         total: medicine.sellingPrice,
       };
       setEditingMedicines(updated);
@@ -262,14 +284,30 @@ export default function BillingManage() {
   const updateEditingMedicineQuantity = (index: number, quantity: number) => {
     const updated = [...editingMedicines];
     updated[index].quantity = quantity;
-    updated[index].total = updated[index].unitPrice * quantity;
+    const gross = updated[index].unitPrice * quantity;
+    const disc = (gross * (updated[index].discountPercent || 0)) / 100;
+    updated[index].discount = disc;
+    updated[index].total = gross - disc;
     setEditingMedicines(updated);
   };
 
   const updateEditingMedicinePrice = (index: number, price: number) => {
     const updated = [...editingMedicines];
     updated[index].unitPrice = price;
-    updated[index].total = price * updated[index].quantity;
+    const gross = price * updated[index].quantity;
+    const disc = (gross * (updated[index].discountPercent || 0)) / 100;
+    updated[index].discount = disc;
+    updated[index].total = gross - disc;
+    setEditingMedicines(updated);
+  };
+
+  const updateEditingMedicineDiscount = (index: number, percent: number) => {
+    const updated = [...editingMedicines];
+    updated[index].discountPercent = percent;
+    const gross = updated[index].unitPrice * updated[index].quantity;
+    const disc = (gross * percent) / 100;
+    updated[index].discount = disc;
+    updated[index].total = gross - disc;
     setEditingMedicines(updated);
   };
 
@@ -959,30 +997,51 @@ export default function BillingManage() {
 
       {/* Edit Bill Dialog */}
       <Dialog open={isEditBillDialogOpen} onOpenChange={setIsEditBillDialogOpen}>
-        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Edit Bill</DialogTitle>
           </DialogHeader>
-          {billToEdit ? (
+          {billToEdit ? (() => {
+            const editTreatmentTotal = editingTreatments.reduce((sum, t) => sum + t.price, 0);
+            const editMedicineTotal = editingMedicines.reduce((sum, m) => sum + m.total, 0);
+            const editTotalMedicineDiscount = editingMedicines.reduce((sum, m) => sum + (m.discount || 0), 0);
+            const editGrossTotal = editTreatmentTotal + editMedicineTotal;
+            const editBillDiscountValue = parseFloat(editingDiscount) || 0;
+            const editBillDiscountAmount = editingDiscountType === "Percentage"
+              ? (editGrossTotal * editBillDiscountValue) / 100
+              : editBillDiscountValue;
+            const editFinalAmount = Math.max(0, editGrossTotal - editBillDiscountAmount);
+
+            return (
             <div className="space-y-4">
-              <div>
-                <p className="text-sm font-medium">Patient: {billToEdit.patientName}</p>
-                <p className="text-sm text-muted-foreground">
-                  Date: {format(new Date(billToEdit.date), "dd MMM yyyy")}
-                </p>
+              {/* Patient & Date */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <p className="text-sm font-medium">Patient: {billToEdit.patientName}</p>
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground mb-1 block">Bill Date</label>
+                  <Input
+                    type="date"
+                    value={editingBillDate}
+                    onChange={(e) => setEditingBillDate(e.target.value)}
+                    className="h-8"
+                  />
+                </div>
               </div>
 
+              {/* Treatments Section */}
               <div className="border-t pt-4">
                 <div className="flex items-center justify-between mb-3">
                   <label className="text-sm font-medium">Treatments</label>
                   <Select onValueChange={addEditingTreatment}>
-                    <SelectTrigger className="w-40">
+                    <SelectTrigger className="w-48">
                       <SelectValue placeholder="Add treatment" />
                     </SelectTrigger>
                     <SelectContent>
                       {treatments.map((treatment) => (
                         <SelectItem key={treatment.id} value={treatment.id}>
-                          {treatment.name}
+                          {treatment.name} - ₹{treatment.defaultPrice}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -1008,7 +1067,7 @@ export default function BillingManage() {
                             onChange={(e) =>
                               updateEditingTreatmentPrice(index, parseFloat(e.target.value) || 0)
                             }
-                            className="h-7 w-20 text-xs"
+                            className="h-7 w-24 text-xs"
                           />
                           <Button
                             variant="ghost"
@@ -1025,12 +1084,13 @@ export default function BillingManage() {
                 )}
               </div>
 
+              {/* Medicines Section */}
               <div className="border-t pt-4">
                 <div className="flex items-center justify-between mb-3">
                   <label className="text-sm font-medium">Medicines</label>
                   <Button variant="outline" size="sm" onClick={addEditingMedicine}>
                     <Plus className="w-3 h-3 mr-1" />
-                    Add
+                    Add Medicine
                   </Button>
                 </div>
                 {editingMedicines.length === 0 ? (
@@ -1038,21 +1098,21 @@ export default function BillingManage() {
                     No medicines
                   </div>
                 ) : (
-                  <div className="space-y-2 max-h-48 overflow-y-auto">
+                  <div className="space-y-2 max-h-60 overflow-y-auto">
                     {editingMedicines.map((med, index) => (
-                      <div key={index} className="p-2 bg-muted/30 rounded space-y-2">
+                      <div key={index} className="p-3 bg-muted/30 rounded space-y-2">
                         <div className="flex items-center gap-2">
                           <Select
                             value={med.medicineId}
                             onValueChange={(value) => updateEditingMedicine(index, value)}
                           >
                             <SelectTrigger className="flex-1 h-8 text-xs">
-                              <SelectValue placeholder="Select" />
+                              <SelectValue placeholder="Select medicine" />
                             </SelectTrigger>
                             <SelectContent>
                               {medicines.filter((m) => m.type !== "Equipment").map((medicine) => (
                                 <SelectItem key={medicine.id} value={medicine.id}>
-                                  {medicine.name}
+                                  {medicine.name} (Stock: {medicine.quantity})
                                 </SelectItem>
                               ))}
                             </SelectContent>
@@ -1060,36 +1120,59 @@ export default function BillingManage() {
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="h-6 w-6 text-destructive"
+                            className="h-7 w-7 text-destructive shrink-0"
                             onClick={() => removeEditingMedicine(index)}
                           >
                             <Trash2 className="w-3 h-3" />
                           </Button>
                         </div>
                         {med.medicineId && (
-                          <div className="grid grid-cols-3 gap-1">
-                            <Input
-                              type="number"
-                              min="1"
-                              value={med.quantity}
-                              onChange={(e) =>
-                                updateEditingMedicineQuantity(index, parseInt(e.target.value) || 1)
-                              }
-                              className="h-7 text-xs"
-                              placeholder="Qty"
-                            />
-                            <Input
-                              type="number"
-                              min="0"
-                              value={med.unitPrice}
-                              onChange={(e) =>
-                                updateEditingMedicinePrice(index, parseFloat(e.target.value) || 0)
-                              }
-                              className="h-7 text-xs"
-                              placeholder="Price"
-                            />
-                            <div className="h-7 flex items-center text-xs font-medium">
-                              ₹{med.total.toFixed(0)}
+                          <div className="grid grid-cols-4 gap-2">
+                            <div>
+                              <label className="text-xs text-muted-foreground">Qty</label>
+                              <Input
+                                type="number"
+                                min="1"
+                                value={med.quantity}
+                                onChange={(e) =>
+                                  updateEditingMedicineQuantity(index, parseInt(e.target.value) || 1)
+                                }
+                                className="h-7 text-xs"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs text-muted-foreground">Price</label>
+                              <Input
+                                type="number"
+                                min="0"
+                                value={med.unitPrice}
+                                onChange={(e) =>
+                                  updateEditingMedicinePrice(index, parseFloat(e.target.value) || 0)
+                                }
+                                className="h-7 text-xs"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs text-muted-foreground">Disc %</label>
+                              <Input
+                                type="number"
+                                min="0"
+                                max="100"
+                                value={med.discountPercent || 0}
+                                onChange={(e) =>
+                                  updateEditingMedicineDiscount(index, parseFloat(e.target.value) || 0)
+                                }
+                                className="h-7 text-xs"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs text-muted-foreground">Total (Net)</label>
+                              <div className="h-7 flex flex-col justify-center text-xs font-medium">
+                                <span>₹{med.total.toFixed(2)}</span>
+                                {(med.discount || 0) > 0 && (
+                                  <span className="text-[10px] text-green-600">(-₹{(med.discount || 0).toFixed(2)})</span>
+                                )}
+                              </div>
                             </div>
                           </div>
                         )}
@@ -1099,25 +1182,86 @@ export default function BillingManage() {
                 )}
               </div>
 
+              {/* Bill Summary */}
               <div className="border-t pt-3 space-y-2 text-sm">
                 <div className="flex justify-between">
-                  <span>Treatment Total:</span>
-                  <span>₹{editingTreatments.reduce((sum, t) => sum + t.price, 0).toFixed(2)}</span>
+                  <span className="text-muted-foreground">Treatment Total</span>
+                  <span>₹{editTreatmentTotal.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span>Medicine Total:</span>
-                  <span>₹{editingMedicines.reduce((sum, m) => sum + m.total, 0).toFixed(2)}</span>
+                  <span className="text-muted-foreground">Medicine Total (Net)</span>
+                  <span>₹{editMedicineTotal.toFixed(2)}</span>
                 </div>
-                <div className="flex justify-between font-semibold">
-                  <span>Grand Total:</span>
-                  <span>
-                    ₹
-                    {(
-                      editingTreatments.reduce((sum, t) => sum + t.price, 0) +
-                      editingMedicines.reduce((sum, m) => sum + m.total, 0)
-                    ).toFixed(2)}
-                  </span>
+                {editTotalMedicineDiscount > 0 && (
+                  <div className="flex justify-between text-green-600">
+                    <span>Medicine Level Discount</span>
+                    <span>-₹{editTotalMedicineDiscount.toFixed(2)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between font-semibold text-base border-t pt-2">
+                  <span>Gross Total</span>
+                  <span>₹{editGrossTotal.toFixed(2)}</span>
                 </div>
+
+                {/* Bill Discount Picker */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-muted/40 p-3 rounded-lg border border-dashed">
+                  <span className="text-sm font-semibold text-muted-foreground">Bill Discount</span>
+                  <div className="flex gap-2 items-center">
+                    <Select value={editingDiscountType} onValueChange={(v) => {
+                      setEditingDiscountType(v as "Percentage" | "INR");
+                      setEditingDiscount("");
+                    }}>
+                      <SelectTrigger className="w-32 h-8 bg-background">
+                        <SelectValue placeholder="Type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Percentage">Percentage (%)</SelectItem>
+                        <SelectItem value="INR">INR (₹)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Input
+                      type="number"
+                      min="0"
+                      max={editingDiscountType === "Percentage" ? 100 : editGrossTotal}
+                      placeholder={editingDiscountType === "Percentage" ? "Enter %" : "Enter amount"}
+                      value={editingDiscount}
+                      onChange={(e) => setEditingDiscount(e.target.value)}
+                      className="w-32 h-8 bg-background"
+                    />
+                  </div>
+                </div>
+
+                {editBillDiscountAmount > 0 && (
+                  <div className="flex justify-between text-sm text-green-600 font-medium">
+                    <span>Applied Bill Discount {editingDiscountType === "Percentage" ? `(${editingDiscount}%)` : ""}</span>
+                    <span>-₹{editBillDiscountAmount.toFixed(2)}</span>
+                  </div>
+                )}
+
+                <div className="flex justify-between font-bold text-lg border-t pt-2 text-primary">
+                  <span>Final Amount</span>
+                  <span>₹{editFinalAmount.toFixed(2)}</span>
+                </div>
+
+                {billToEdit.amountPaid > 0 && (
+                  <div className="p-2 bg-muted/50 rounded-lg space-y-1 text-xs">
+                    <div className="flex justify-between">
+                      <span>Already Paid:</span>
+                      <span className="font-medium text-green-600">₹{Math.min(billToEdit.amountPaid, editFinalAmount).toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Pending After Update:</span>
+                      <span className={`font-medium ${(editFinalAmount - Math.min(billToEdit.amountPaid, editFinalAmount)) > 0 ? 'text-destructive' : 'text-green-600'}`}>
+                        ₹{(editFinalAmount - Math.min(billToEdit.amountPaid, editFinalAmount)).toFixed(2)}
+                      </span>
+                    </div>
+                    {billToEdit.amountPaid > editFinalAmount && (
+                      <p className="text-amber-600 text-[10px] mt-1">
+                        ⚠ Amount paid exceeds new final amount. Paid will be capped to ₹{editFinalAmount.toFixed(2)}
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="flex justify-end gap-2">
@@ -1133,6 +1277,9 @@ export default function BillingManage() {
                         billId: billToEdit.id,
                         treatments: editingTreatments,
                         medicines: editingMedicines,
+                        discount: parseFloat(editingDiscount) || 0,
+                        discountType: editingDiscountType,
+                        date: editingBillDate,
                       });
                     }
                   }}
@@ -1141,7 +1288,8 @@ export default function BillingManage() {
                 </Button>
               </div>
             </div>
-          ) : (
+            );
+          })() : (
             <p className="text-sm text-muted-foreground">Loading...</p>
           )}
         </DialogContent>

@@ -270,6 +270,7 @@ export interface Appointment {
   reason: string;
   status: string; // "Scheduled", "Completed", "Cancelled"
   isUpcoming: boolean; // Computed or stored
+  type?: "New" | "Follow-up";
 }
 
 export const insertAppointmentSchema = z.object({
@@ -278,6 +279,7 @@ export const insertAppointmentSchema = z.object({
   time: z.string().default("09:00"),
   reason: z.string().optional().default(""),
   status: z.enum(["Scheduled", "Completed", "Cancelled"]).default("Scheduled"),
+  type: z.enum(["New", "Follow-up"]).default("New"),
 });
 
 export type InsertAppointment = z.infer<typeof insertAppointmentSchema>;

@@ -238,6 +238,7 @@ type DbAppointmentRow = {
   time: string;
   reason: string;
   status: string;
+  type?: string;
 };
 
 type DbPaymentLedgerRow = {
@@ -309,7 +310,8 @@ const createTableStatements = [
     patient_id UUID REFERENCES patients(id) ON DELETE CASCADE,
     date TEXT NOT NULL,
     reason TEXT NOT NULL,
-    status TEXT NOT NULL
+    status TEXT NOT NULL,
+    type TEXT DEFAULT 'New'
   )`,
   `CREATE INDEX IF NOT EXISTS appointments_patient_idx ON appointments(patient_id)`,
   `CREATE TABLE IF NOT EXISTS payment_ledger (
@@ -362,6 +364,9 @@ async function ensureTables(): Promise<void> {
   }
   // Migration for new time column
   await pool.query("ALTER TABLE appointments ADD COLUMN IF NOT EXISTS time TEXT DEFAULT ''");
+
+  // Migration for Appointment type
+  await pool.query("ALTER TABLE appointments ADD COLUMN IF NOT EXISTS type TEXT DEFAULT 'New'");
 
   // Migration for Medicine type
   await pool.query("ALTER TABLE medicines ADD COLUMN IF NOT EXISTS type TEXT DEFAULT 'Medicine'");
@@ -645,6 +650,7 @@ const mapAppointment = (row: DbAppointmentRow): Appointment => ({
   reason: row.reason,
   status: row.status,
   isUpcoming: new Date(row.date) >= new Date(new Date().setHours(0, 0, 0, 0)),
+  type: (row.type || "New") as "New" | "Follow-up",
 });
 
 const mapPaymentLedger = (row: DbPaymentLedgerRow): PaymentLedger => ({
@@ -1302,7 +1308,7 @@ export class PostgresStorage implements IStorage {
     }
     const { rows } = await pool.query<DbBillRow>(
       `SELECT id, patient_id, patient_name, date, treatments, medicines,
-            treatment_total, medicine_total, grand_total, discount, final_amount, amount_paid, pending_amount
+            treatment_total, medicine_total, grand_total, discount, discount_type, final_amount, amount_paid, pending_amount
        FROM bills
        ORDER BY date DESC`
     );
@@ -1322,7 +1328,7 @@ export class PostgresStorage implements IStorage {
     const dbId = this.convertId("bills", id);
     const { rows } = await pool.query<DbBillRow>(
       `SELECT id, patient_id, patient_name, date, treatments, medicines,
-            treatment_total, medicine_total, grand_total, discount, final_amount, amount_paid, pending_amount
+            treatment_total, medicine_total, grand_total, discount, discount_type, final_amount, amount_paid, pending_amount
        FROM bills
        WHERE id = $1`,
       [dbId]
@@ -1495,7 +1501,9 @@ export class PostgresStorage implements IStorage {
               const eqMedicine = eqMedRows[0] ? mapMedicine(eqMedRows[0]) : undefined;
 
               if (!eqMedicine) {
-                throw new Error(`Surgery equipment item with ID ${eq.medicineId} not found`);
+                // Equipment medicine was deleted – skip stock deduction silently
+                console.warn(`Surgery equipment item with ID ${eq.medicineId} no longer exists in medicines table – skipping stock deduction`);
+                continue;
               }
 
               if (eqMedicine.quantity < eq.quantity) {
@@ -1671,7 +1679,7 @@ export class PostgresStorage implements IStorage {
             pending_amount = GREATEST(0, final_amount - $2)
        WHERE id = $1
        RETURNING id, patient_id, patient_name, date, treatments, medicines,
-            treatment_total, medicine_total, grand_total, discount, final_amount, amount_paid, pending_amount`,
+            treatment_total, medicine_total, grand_total, discount, discount_type, final_amount, amount_paid, pending_amount`,
       [dbId, amountPaid]
     );
     const bill = rows[0] ? mapBill(rows[0]) : undefined;
@@ -1873,7 +1881,7 @@ export class PostgresStorage implements IStorage {
 
     const { rows } = await pool.query<DbBillRow>(
       `SELECT id, patient_id, patient_name, date, treatments, medicines,
-            treatment_total, medicine_total, grand_total, discount, final_amount, amount_paid, pending_amount
+            treatment_total, medicine_total, grand_total, discount, discount_type, final_amount, amount_paid, pending_amount
        FROM bills
        ORDER BY date DESC
        LIMIT $1 OFFSET $2`,
@@ -1911,7 +1919,7 @@ export class PostgresStorage implements IStorage {
       return cached;
     }
     const { rows } = await pool.query<DbAppointmentRow>(
-      `SELECT a.id, a.patient_id, p.name as patient_name, a.date, a.time, a.reason, a.status 
+      `SELECT a.id, a.patient_id, p.name as patient_name, a.date, a.time, a.reason, a.status, a.type 
        FROM appointments a
        LEFT JOIN patients p ON a.patient_id = p.id
        ORDER BY a.date ASC, a.time ASC`
@@ -1931,11 +1939,11 @@ export class PostgresStorage implements IStorage {
     }
     const dbId = this.convertId("appointments", id);
     const { rows } = await pool.query<DbAppointmentRow>(
-      `SELECT a.id, a.patient_id, p.name as patient_name, a.date, a.time, a.reason, a.status 
+      `SELECT a.id, a.patient_id, p.name as patient_name, a.date, a.time, a.reason, a.status, a.type 
        FROM appointments a
        LEFT JOIN patients p ON a.patient_id = p.id
        WHERE a.id = $1`,
-      [dbId]
+       [dbId]
     );
     const appointment = rows[0] ? mapAppointment(rows[0]) : undefined;
     if (appointment) {
@@ -1954,12 +1962,12 @@ export class PostgresStorage implements IStorage {
     }
     const dbPatientId = this.convertId("patients", patientId);
     const { rows } = await pool.query<DbAppointmentRow>(
-      `SELECT a.id, a.patient_id, p.name as patient_name, a.date, a.time, a.reason, a.status 
+      `SELECT a.id, a.patient_id, p.name as patient_name, a.date, a.time, a.reason, a.status, a.type 
        FROM appointments a
        LEFT JOIN patients p ON a.patient_id = p.id
        WHERE a.patient_id = $1
        ORDER BY a.date ASC, a.time ASC`,
-      [dbPatientId]
+       [dbPatientId]
     );
     const appointments = rows.map(mapAppointment);
     this.cache.set(cacheKey, appointments);
@@ -1970,18 +1978,18 @@ export class PostgresStorage implements IStorage {
     await this.waitForReady();
     const useNumericId = this.usesNumericId("appointments");
     const query = useNumericId
-      ? `INSERT INTO appointments(patient_id, date, time, reason, status)
-         VALUES($1, $2, $3, $4, $5)
-         RETURNING id, patient_id, date, time, reason, status`
-      : `INSERT INTO appointments(id, patient_id, date, time, reason, status)
+      ? `INSERT INTO appointments(patient_id, date, time, reason, status, type)
          VALUES($1, $2, $3, $4, $5, $6)
-         RETURNING id, patient_id, date, time, reason, status`;
+         RETURNING id, patient_id, date, time, reason, status, type`
+      : `INSERT INTO appointments(id, patient_id, date, time, reason, status, type)
+         VALUES($1, $2, $3, $4, $5, $6, $7)
+         RETURNING id, patient_id, date, time, reason, status, type`;
 
     const dbPatientId = this.convertId("patients", insert.patientId);
 
     const params = useNumericId
-      ? [dbPatientId, insert.date, insert.time, insert.reason, insert.status]
-      : [randomUUID(), dbPatientId, insert.date, insert.time, insert.reason, insert.status];
+      ? [dbPatientId, insert.date, insert.time, insert.reason, insert.status, insert.type || "New"]
+      : [randomUUID(), dbPatientId, insert.date, insert.time, insert.reason, insert.status, insert.type || "New"];
 
     const { rows } = await pool.query<DbAppointmentRow>(query, params);
 
@@ -2007,10 +2015,10 @@ export class PostgresStorage implements IStorage {
 
     const { rows } = await pool.query<DbAppointmentRow>(
       `UPDATE appointments
-       SET patient_id = $2, date = $3, time = $4, reason = $5, status = $6
+       SET patient_id = $2, date = $3, time = $4, reason = $5, status = $6, type = $7
        WHERE id = $1
-       RETURNING id, patient_id, date, time, reason, status`,
-      [dbId, dbPatientId, insert.date, insert.time, insert.reason, insert.status]
+       RETURNING id, patient_id, date, time, reason, status, type`,
+      [dbId, dbPatientId, insert.date, insert.time, insert.reason, insert.status, insert.type || "New"]
     );
 
     if (!rows[0]) return undefined;

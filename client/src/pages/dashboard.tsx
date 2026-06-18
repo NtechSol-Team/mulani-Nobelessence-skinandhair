@@ -48,6 +48,7 @@ export default function Dashboard() {
       date: format(new Date(), "yyyy-MM-dd"),
       reason: "",
       status: "Scheduled",
+      type: "New",
     },
   });
 
@@ -1042,6 +1043,31 @@ export default function Dashboard() {
                     <FormControl>
                       <Input type="date" {...field} />
                     </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="type"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Appointment Tag</FormLabel>
+                    <Select
+                      onValueChange={field.onChange}
+                      value={field.value || "New"}
+                    >
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select type" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="New">New</SelectItem>
+                        <SelectItem value="Follow-up">Follow-up</SelectItem>
+                      </SelectContent>
+                    </Select>
                     <FormMessage />
                   </FormItem>
                 )}

@@ -28,6 +28,8 @@ export default function CRMTasks() {
   const [search, setSearch] = useState("");
   const [selectedStatus, setSelectedStatus] = useState("Pending");
   const [selectedDueDateFilter, setSelectedDueDateFilter] = useState("All");
+  const [customFromDate, setCustomFromDate] = useState("");
+  const [customToDate, setCustomToDate] = useState("");
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [taskToLog, setTaskToLog] = useState<CRMTask | null>(null);
   const [isTaskLogDialogOpen, setIsTaskLogDialogOpen] = useState(false);
@@ -197,6 +199,13 @@ export default function CRMTasks() {
       matchesDueDate = task.dueDate <= todayStr;
     } else if (selectedDueDateFilter === "Upcoming") {
       matchesDueDate = task.dueDate > todayStr;
+    } else if (selectedDueDateFilter === "Custom") {
+      if (customFromDate && task.dueDate < customFromDate) {
+        matchesDueDate = false;
+      }
+      if (customToDate && task.dueDate > customToDate) {
+        matchesDueDate = false;
+      }
     }
     
     return matchesSearch && matchesStatus && matchesDueDate;
@@ -375,7 +384,48 @@ export default function CRMTasks() {
             >
               Upcoming
             </Button>
+            <Button
+              size="sm"
+              variant={selectedDueDateFilter === "Custom" ? "default" : "ghost"}
+              className="text-xs h-8"
+              onClick={() => setSelectedDueDateFilter("Custom")}
+            >
+              Custom Range
+            </Button>
           </div>
+
+          {selectedDueDateFilter === "Custom" && (
+            <div className="flex items-center gap-2 border rounded-lg p-1 bg-muted/30">
+              <Input
+                type="date"
+                value={customFromDate}
+                onChange={(e) => setCustomFromDate(e.target.value)}
+                className="w-32 h-8 text-xs bg-background border-none shadow-none focus-visible:ring-1"
+                placeholder="From"
+              />
+              <span className="text-[10px] text-muted-foreground font-semibold uppercase">to</span>
+              <Input
+                type="date"
+                value={customToDate}
+                onChange={(e) => setCustomToDate(e.target.value)}
+                className="w-32 h-8 text-xs bg-background border-none shadow-none focus-visible:ring-1"
+                placeholder="To"
+              />
+              {(customFromDate || customToDate) && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setCustomFromDate("");
+                    setCustomToDate("");
+                  }}
+                  className="h-8 px-2 text-xs"
+                >
+                  Clear
+                </Button>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="relative w-full md:w-80">
