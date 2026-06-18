@@ -10,14 +10,14 @@ import {
   BarChart3,
   Moon,
   Sun,
-  Heart,
   Calendar,
   Database,
   ChevronDown,
   LogOut,
   Users,
   CheckSquare,
-  ShieldAlert
+  ShieldAlert,
+  Plus
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useTheme } from "@/components/theme-provider";
@@ -40,11 +40,23 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { path: "/", label: "Dashboard", icon: LayoutDashboard },
-  { path: "/registration", label: "New Registration", icon: UserPlus, module: "patients" },
-  { path: "/appointments", label: "Appointments", icon: Calendar, module: "appointments" },
-  { path: "/billing", label: "Create Bill", icon: Receipt, module: "billing" },
-  { path: "/bills", label: "View Bills", icon: Receipt, module: "billing" },
-  { path: "/expenses", label: "Expenses", icon: Wallet, module: "expenses" },
+  {
+    label: "Patients Desk",
+    icon: UserPlus,
+    children: [
+      { path: "/registration", label: "New Registration", icon: UserPlus, module: "patients" },
+      { path: "/appointments", label: "Appointments", icon: Calendar, module: "appointments" },
+    ]
+  },
+  {
+    label: "Billing & Finance",
+    icon: Receipt,
+    children: [
+      { path: "/billing", label: "Create Bill", icon: Plus, module: "billing" },
+      { path: "/bills", label: "View Bills", icon: Receipt, module: "billing" },
+      { path: "/expenses", label: "Expenses", icon: Wallet, module: "expenses" },
+    ]
+  },
   {
     label: "Masters",
     icon: Database,
@@ -74,28 +86,29 @@ function NavDropdown({ item, isActive }: { item: any, isActive: boolean }) {
     <div
       onMouseEnter={() => setIsOpen(true)}
       onMouseLeave={() => setIsOpen(false)}
+      className="relative"
     >
       <DropdownMenu open={isOpen} onOpenChange={setIsOpen} modal={false}>
         <DropdownMenuTrigger asChild>
           <Button
             variant={isActive ? "default" : "ghost"}
             size="sm"
-            className="gap-2 shrink-0 animate-fade-in"
-            data-testid={`nav-${item.label.toLowerCase()}`}
+            className="gap-2 shrink-0 transition-all duration-200"
+            data-testid={`nav-${item.label.toLowerCase().replace(/\s+/g, "-")}`}
           >
             <Icon className="w-4 h-4" />
             <span className="hidden lg:inline-block">{item.label}</span>
-            <ChevronDown className="w-3 h-3 ml-1 opacity-50" />
+            <ChevronDown className="w-3 h-3 ml-0.5 opacity-50" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-48 backdrop-blur-md bg-card/90">
+        <DropdownMenuContent align="start" className="w-52 backdrop-blur-md bg-card/95 shadow-lg border animate-in fade-in slide-in-from-top-1">
           {item.children.map((child: any) => {
             const ChildIcon = child.icon;
             return (
               <Link key={child.path} href={child.path}>
-                <DropdownMenuItem className="cursor-pointer gap-2 transition-colors duration-150">
+                <DropdownMenuItem className="cursor-pointer gap-2 py-2.5 transition-colors hover:bg-muted/80">
                   <ChildIcon className="w-4 h-4 text-muted-foreground" />
-                  {child.label}
+                  <span className="text-sm font-medium">{child.label}</span>
                 </DropdownMenuItem>
               </Link>
             );
@@ -111,6 +124,7 @@ export function Navbar() {
   const { theme, setTheme } = useTheme();
   const { toast } = useToast();
   const { user, logoutMutation } = useAuth();
+  const [profileOpen, setProfileOpen] = useState(false);
 
   if (!user) return null;
 
@@ -140,7 +154,6 @@ export function Navbar() {
     })
     .filter((item): item is NavItem => item !== null);
 
-  // If SuperAdmin, add User Management button
   if (user.role === "SuperAdmin") {
     filteredNavItems.push({
       path: "/users",
@@ -191,10 +204,42 @@ export function Navbar() {
           </div>
 
           <div className="flex items-center gap-2">
-            <div className="hidden sm:flex flex-col items-end mr-2 text-right">
-              <span className="text-xs font-semibold text-foreground leading-none">{user.username}</span>
-              <span className="text-[10px] text-muted-foreground mt-0.5 capitalize">{user.role}</span>
+            {/* User Profile dropdown opens on Hover */}
+            <div
+              onMouseEnter={() => setProfileOpen(true)}
+              onMouseLeave={() => setProfileOpen(false)}
+              className="relative"
+            >
+              <DropdownMenu open={profileOpen} onOpenChange={setProfileOpen} modal={false}>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" className="h-9 gap-2 px-3 hover:bg-muted/80 rounded-md">
+                    <div className="flex flex-col items-end text-right hidden sm:flex">
+                      <span className="text-xs font-semibold text-foreground leading-none">{user.username}</span>
+                      <span className="text-[10px] text-muted-foreground mt-1 capitalize">{user.role}</span>
+                    </div>
+                    <ChevronDown className="w-3.5 h-3.5 opacity-50" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-48 backdrop-blur-md bg-card/95 shadow-md border animate-in fade-in slide-in-from-top-1">
+                  {user.role === "SuperAdmin" && (
+                    <Link href="/users">
+                      <DropdownMenuItem className="cursor-pointer gap-2 py-2.5 transition-colors hover:bg-muted/80">
+                        <ShieldAlert className="w-4 h-4 text-muted-foreground" />
+                        <span className="text-sm font-medium">User Management</span>
+                      </DropdownMenuItem>
+                    </Link>
+                  )}
+                  <DropdownMenuItem
+                    onClick={handleLogout}
+                    className="cursor-pointer gap-2 py-2.5 text-destructive hover:bg-destructive/10 hover:text-destructive focus:bg-destructive/10 focus:text-destructive"
+                  >
+                    <LogOut className="w-4 h-4" />
+                    <span className="text-sm font-medium">Logout</span>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
+
             <Button
               variant="ghost"
               size="icon"
@@ -206,15 +251,6 @@ export function Navbar() {
               ) : (
                 <Moon className="w-5 h-5 text-indigo-500" />
               )}
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={handleLogout}
-              title="Logout"
-              className="text-destructive hover:bg-destructive/10"
-            >
-              <LogOut className="w-5 h-5" />
             </Button>
           </div>
         </div>

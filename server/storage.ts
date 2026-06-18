@@ -25,6 +25,8 @@ import {
   type InsertCRMTask,
   type Department,
   type InsertDepartment,
+  type User,
+  type RegisterInput,
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 import { Pool } from "pg";
@@ -704,6 +706,7 @@ export class PostgresStorage implements IStorage {
     crm_interactions: "text",
     crm_tasks: "text",
     departments: "text",
+    users: "text",
   };
   private cache = new DataCache(5_000);
 
