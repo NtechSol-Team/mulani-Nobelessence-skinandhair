@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, Fragment } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -79,10 +79,33 @@ const modulesList = [
   { id: "reports", label: "Reports & Analytics" },
 ];
 
+const medColumns = [
+  { id: "name", label: "Medicine Name" },
+  { id: "type", label: "Type" },
+  { id: "vendorName", label: "Vendor" },
+  { id: "purchaseCost", label: "Purchase Cost" },
+  { id: "sellingPrice", label: "Selling Price" },
+  { id: "margin", label: "Margin" },
+  { id: "quantity", label: "Stock" },
+  { id: "actions", label: "Actions" },
+];
+
 const defaultPermissions = () => {
-  const perm: Record<string, { view: boolean; add: boolean; edit: boolean; delete: boolean }> = {};
+  const perm: Record<string, { view: boolean; add: boolean; edit: boolean; delete: boolean; fields?: Record<string, boolean> }> = {};
   modulesList.forEach((m) => {
     perm[m.id] = { view: false, add: false, edit: false, delete: false };
+    if (m.id === "medicines") {
+      perm[m.id].fields = {
+        name: true,
+        type: true,
+        vendorName: true,
+        purchaseCost: true,
+        sellingPrice: true,
+        margin: true,
+        quantity: true,
+        actions: true,
+      };
+    }
   });
   return perm;
 };
@@ -199,6 +222,18 @@ export default function UsersPage() {
             add: !!u.permissions[m.id].add,
             edit: !!u.permissions[m.id].edit,
             delete: !!u.permissions[m.id].delete,
+            ...(m.id === "medicines" ? {
+              fields: {
+                name: u.permissions[m.id].fields?.name !== false,
+                type: u.permissions[m.id].fields?.type !== false,
+                vendorName: u.permissions[m.id].fields?.vendorName !== false,
+                purchaseCost: u.permissions[m.id].fields?.purchaseCost !== false,
+                sellingPrice: u.permissions[m.id].fields?.sellingPrice !== false,
+                margin: u.permissions[m.id].fields?.margin !== false,
+                quantity: u.permissions[m.id].fields?.quantity !== false,
+                actions: u.permissions[m.id].fields?.actions !== false,
+              }
+            } : {})
           };
         }
       });
@@ -360,77 +395,114 @@ export default function UsersPage() {
                         </TableHeader>
                         <TableBody>
                           {modulesList.map((m) => (
-                            <TableRow key={m.id} className="hover:bg-muted/30">
-                              <TableCell className="font-medium text-xs py-3">{m.label}</TableCell>
-                              
-                              {/* View Checkbox */}
-                              <TableCell className="text-center py-2">
-                                <FormField
-                                  control={form.control}
-                                  name={`permissions.${m.id}.view` as any}
-                                  render={({ field }) => (
-                                    <FormControl>
-                                      <Checkbox
-                                        checked={field.value}
-                                        onCheckedChange={field.onChange}
-                                        className="h-4 w-4"
-                                      />
-                                    </FormControl>
-                                  )}
-                                />
-                              </TableCell>
+                            <Fragment key={m.id}>
+                              <TableRow className="hover:bg-muted/30">
+                                <TableCell className="font-medium text-xs py-3">{m.label}</TableCell>
+                                
+                                {/* View Checkbox */}
+                                <TableCell className="text-center py-2">
+                                  <FormField
+                                    control={form.control}
+                                    name={`permissions.${m.id}.view` as any}
+                                    render={({ field }) => (
+                                      <FormControl>
+                                        <Checkbox
+                                          checked={field.value}
+                                          onCheckedChange={field.onChange}
+                                          className="h-4 w-4"
+                                        />
+                                      </FormControl>
+                                    )}
+                                  />
+                                </TableCell>
 
-                              {/* Add Checkbox */}
-                              <TableCell className="text-center py-2">
-                                <FormField
-                                  control={form.control}
-                                  name={`permissions.${m.id}.add` as any}
-                                  render={({ field }) => (
-                                    <FormControl>
-                                      <Checkbox
-                                        checked={field.value}
-                                        onCheckedChange={field.onChange}
-                                        className="h-4 w-4"
-                                      />
-                                    </FormControl>
-                                  )}
-                                />
-                              </TableCell>
+                                {/* Add Checkbox */}
+                                <TableCell className="text-center py-2">
+                                  <FormField
+                                    control={form.control}
+                                    name={`permissions.${m.id}.add` as any}
+                                    render={({ field }) => (
+                                      <FormControl>
+                                        <Checkbox
+                                          checked={field.value}
+                                          onCheckedChange={field.onChange}
+                                          className="h-4 w-4"
+                                        />
+                                      </FormControl>
+                                    )}
+                                  />
+                                </TableCell>
 
-                              {/* Edit Checkbox */}
-                              <TableCell className="text-center py-2">
-                                <FormField
-                                  control={form.control}
-                                  name={`permissions.${m.id}.edit` as any}
-                                  render={({ field }) => (
-                                    <FormControl>
-                                      <Checkbox
-                                        checked={field.value}
-                                        onCheckedChange={field.onChange}
-                                        className="h-4 w-4"
-                                      />
-                                    </FormControl>
-                                  )}
-                                />
-                              </TableCell>
+                                {/* Edit Checkbox */}
+                                <TableCell className="text-center py-2">
+                                  <FormField
+                                    control={form.control}
+                                    name={`permissions.${m.id}.edit` as any}
+                                    render={({ field }) => (
+                                      <FormControl>
+                                        <Checkbox
+                                          checked={field.value}
+                                          onCheckedChange={field.onChange}
+                                          className="h-4 w-4"
+                                        />
+                                      </FormControl>
+                                    )}
+                                  />
+                                </TableCell>
 
-                              {/* Delete Checkbox */}
-                              <TableCell className="text-center py-2">
-                                <FormField
-                                  control={form.control}
-                                  name={`permissions.${m.id}.delete` as any}
-                                  render={({ field }) => (
-                                    <FormControl>
-                                      <Checkbox
-                                        checked={field.value}
-                                        onCheckedChange={field.onChange}
-                                        className="h-4 w-4"
-                                      />
-                                    </FormControl>
-                                  )}
-                                />
-                              </TableCell>
-                            </TableRow>
+                                {/* Delete Checkbox */}
+                                <TableCell className="text-center py-2">
+                                  <FormField
+                                    control={form.control}
+                                    name={`permissions.${m.id}.delete` as any}
+                                    render={({ field }) => (
+                                      <FormControl>
+                                        <Checkbox
+                                          checked={field.value}
+                                          onCheckedChange={field.onChange}
+                                          className="h-4 w-4"
+                                        />
+                                      </FormControl>
+                                    )}
+                                  />
+                                </TableCell>
+                              </TableRow>
+
+                              {m.id === "medicines" && form.watch("permissions.medicines.view") && (
+                                <TableRow className="bg-muted/5 hover:bg-muted/5 border-t-0">
+                                  <TableCell colSpan={5} className="pl-6 pr-6 pb-4 pt-1">
+                                    <div className="space-y-2 border-l-2 border-primary/30 pl-4">
+                                      <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">
+                                        Column Visibility & Form Access Configuration
+                                      </span>
+                                      <div className="grid grid-cols-2 gap-x-4 gap-y-2 bg-background p-3 rounded-md border shadow-sm">
+                                        {medColumns.map((col) => (
+                                          <FormField
+                                            key={col.id}
+                                            control={form.control}
+                                            name={`permissions.medicines.fields.${col.id}` as any}
+                                            render={({ field }) => (
+                                              <FormItem className="flex items-center space-x-2 space-y-0 py-1">
+                                                <FormControl>
+                                                  <Checkbox
+                                                    checked={field.value !== false}
+                                                    onCheckedChange={field.onChange}
+                                                    className="h-3.5 w-3.5"
+                                                  />
+                                                </FormControl>
+                                                <FormLabel className="text-xs font-medium text-foreground cursor-pointer select-none">
+                                                  {col.label}
+                                                </FormLabel>
+                                              </FormItem>
+                                            )}
+                                          />
+                                        ))}
+                                      </div>
+                                    </div>
+                                  </TableCell>
+                                </TableRow>
+                              )}
+                            </Fragment>
                           ))}
                         </TableBody>
                       </Table>

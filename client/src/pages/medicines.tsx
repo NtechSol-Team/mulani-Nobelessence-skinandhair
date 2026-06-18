@@ -74,6 +74,15 @@ export default function Medicines() {
   const canAdd = user?.role === "SuperAdmin" || !!user?.permissions?.medicines?.add;
   const canEdit = user?.role === "SuperAdmin" || !!user?.permissions?.medicines?.edit;
   const canDelete = user?.role === "SuperAdmin" || !!user?.permissions?.medicines?.delete;
+
+  const showField = (fieldName: string) => {
+    if (user?.role === "SuperAdmin") return true;
+    const medicinesPermissions = user?.permissions?.medicines;
+    if (!medicinesPermissions) return true;
+    if (!medicinesPermissions.fields) return true;
+    return medicinesPermissions.fields[fieldName] !== false;
+  };
+
   const queryClient = useQueryClient();
   const [searchQuery, setSearchQuery] = useState("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -215,7 +224,13 @@ export default function Medicines() {
         </p>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className={`grid gap-4 ${
+        showField("quantity") && showField("purchaseCost")
+          ? "md:grid-cols-3"
+          : showField("quantity") || showField("purchaseCost")
+            ? "md:grid-cols-2"
+            : "md:grid-cols-1"
+      }`}>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
@@ -230,37 +245,41 @@ export default function Medicines() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Low Stock Items
-            </CardTitle>
-            <AlertTriangle className="w-4 h-4 text-destructive" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-destructive" data-testid="text-low-stock">
-              {isLoading ? <Skeleton className="h-8 w-16" /> : lowStockMedicines.length}
-            </div>
-          </CardContent>
-        </Card>
+        {showField("quantity") && (
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                Low Stock Items
+              </CardTitle>
+              <AlertTriangle className="w-4 h-4 text-destructive" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-destructive" data-testid="text-low-stock">
+                {isLoading ? <Skeleton className="h-8 w-16" /> : lowStockMedicines.length}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Total Stock Value
-            </CardTitle>
-            <Package className="w-4 h-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold" data-testid="text-stock-value">
-              {isLoading ? (
-                <Skeleton className="h-8 w-24" />
-              ) : (
-                `₹${totalStockValue.toLocaleString()}`
-              )}
-            </div>
-          </CardContent>
-        </Card>
+        {showField("purchaseCost") && showField("quantity") && (
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                Total Stock Value
+              </CardTitle>
+              <Package className="w-4 h-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold" data-testid="text-stock-value">
+                {isLoading ? (
+                  <Skeleton className="h-8 w-24" />
+                ) : (
+                  `₹${totalStockValue.toLocaleString()}`
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </div>
 
       <Card>
@@ -298,125 +317,139 @@ export default function Medicines() {
                     </DialogHeader>
                     <Form {...form}>
                       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-                        <FormField
-                          control={form.control}
-                          name="name"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Medicine Name</FormLabel>
-                              <FormControl>
-                                <Input
-                                  placeholder="Enter medicine name"
-                                  {...field}
-                                  data-testid="input-medicine-name"
-                                />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-
-                        <div className="grid grid-cols-2 gap-4">
+                        {showField("name") && (
                           <FormField
                             control={form.control}
-                            name="purchaseCost"
+                            name="name"
                             render={({ field }) => (
                               <FormItem>
-                                <FormLabel>Purchase Cost (₹)</FormLabel>
+                                <FormLabel>Medicine Name</FormLabel>
                                 <FormControl>
                                   <Input
-                                    type="number"
-                                    placeholder="0"
+                                    placeholder="Enter medicine name"
                                     {...field}
-                                    onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
-                                    data-testid="input-purchase-cost"
+                                    data-testid="input-medicine-name"
                                   />
                                 </FormControl>
                                 <FormMessage />
                               </FormItem>
                             )}
                           />
+                        )}
 
+                        {(showField("purchaseCost") || showField("sellingPrice")) && (
+                          <div className={`grid ${showField("purchaseCost") && showField("sellingPrice") ? "grid-cols-2" : "grid-cols-1"} gap-4`}>
+                            {showField("purchaseCost") && (
+                              <FormField
+                                control={form.control}
+                                name="purchaseCost"
+                                render={({ field }) => (
+                                  <FormItem>
+                                    <FormLabel>Purchase Cost (₹)</FormLabel>
+                                    <FormControl>
+                                      <Input
+                                        type="number"
+                                        placeholder="0"
+                                        {...field}
+                                        onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
+                                        data-testid="input-purchase-cost"
+                                      />
+                                    </FormControl>
+                                    <FormMessage />
+                                  </FormItem>
+                                )}
+                              />
+                            )}
+
+                            {showField("sellingPrice") && (
+                              <FormField
+                                control={form.control}
+                                name="sellingPrice"
+                                render={({ field }) => (
+                                  <FormItem>
+                                    <FormLabel>Selling Price (₹)</FormLabel>
+                                    <FormControl>
+                                      <Input
+                                        type="number"
+                                        placeholder="0"
+                                        {...field}
+                                        onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
+                                        data-testid="input-selling-price"
+                                      />
+                                    </FormControl>
+                                    <FormMessage />
+                                  </FormItem>
+                                )}
+                              />
+                            )}
+                          </div>
+                        )}
+
+                        {showField("type") && (
                           <FormField
                             control={form.control}
-                            name="sellingPrice"
+                            name="type"
                             render={({ field }) => (
                               <FormItem>
-                                <FormLabel>Selling Price (₹)</FormLabel>
+                                <FormLabel>Type</FormLabel>
+                                <Select onValueChange={field.onChange} value={field.value}>
+                                  <FormControl>
+                                    <SelectTrigger>
+                                      <SelectValue placeholder="Select type" />
+                                    </SelectTrigger>
+                                  </FormControl>
+                                  <SelectContent>
+                                    <SelectItem value="Medicine">Medicine</SelectItem>
+                                    <SelectItem value="Equipment">Surgery Equipment</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        )}
+
+                        {showField("vendorName") && (
+                          <FormField
+                            control={form.control}
+                            name="vendorName"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Vendor Name</FormLabel>
                                 <FormControl>
                                   <Input
-                                    type="number"
-                                    placeholder="0"
+                                    placeholder="Enter vendor name"
                                     {...field}
-                                    onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
-                                    data-testid="input-selling-price"
+                                    data-testid="input-vendor-name"
                                   />
                                 </FormControl>
                                 <FormMessage />
                               </FormItem>
                             )}
                           />
-                        </div>
+                        )}
 
-                        <FormField
-                          control={form.control}
-                          name="type"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Type</FormLabel>
-                              <Select onValueChange={field.onChange} value={field.value}>
+                        {showField("quantity") && (
+                          <FormField
+                            control={form.control}
+                            name="quantity"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Stock Quantity</FormLabel>
                                 <FormControl>
-                                  <SelectTrigger>
-                                    <SelectValue placeholder="Select type" />
-                                  </SelectTrigger>
+                                  <Input
+                                    type="number"
+                                    placeholder="0"
+                                    {...field}
+                                    onChange={(e) => field.onChange(parseInt(e.target.value) || 0)}
+                                    data-testid="input-quantity"
+                                  />
                                 </FormControl>
-                                <SelectContent>
-                                  <SelectItem value="Medicine">Medicine</SelectItem>
-                                  <SelectItem value="Equipment">Surgery Equipment</SelectItem>
-                                </SelectContent>
-                              </Select>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-
-                        <FormField
-                          control={form.control}
-                          name="vendorName"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Vendor Name</FormLabel>
-                              <FormControl>
-                                <Input
-                                  placeholder="Enter vendor name"
-                                  {...field}
-                                  data-testid="input-vendor-name"
-                                />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-
-                        <FormField
-                          control={form.control}
-                          name="quantity"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Stock Quantity</FormLabel>
-                              <FormControl>
-                                <Input
-                                  type="number"
-                                  placeholder="0"
-                                  {...field}
-                                  onChange={(e) => field.onChange(parseInt(e.target.value) || 0)}
-                                  data-testid="input-quantity"
-                                />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        )}
 
                         <div className="flex justify-end gap-3 pt-2">
                           <Button type="button" variant="outline" onClick={closeDialog}>
@@ -464,14 +497,14 @@ export default function Medicines() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Medicine Name</TableHead>
-                    <TableHead>Type</TableHead>
-                    <TableHead>Vendor</TableHead>
-                    <TableHead className="text-right">Purchase Cost</TableHead>
-                    <TableHead className="text-right">Selling Price</TableHead>
-                    <TableHead className="text-right">Margin</TableHead>
-                    <TableHead className="text-right">Stock</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
+                    {showField("name") && <TableHead>Medicine Name</TableHead>}
+                    {showField("type") && <TableHead>Type</TableHead>}
+                    {showField("vendorName") && <TableHead>Vendor</TableHead>}
+                    {showField("purchaseCost") && <TableHead className="text-right">Purchase Cost</TableHead>}
+                    {showField("sellingPrice") && <TableHead className="text-right">Selling Price</TableHead>}
+                    {showField("margin") && <TableHead className="text-right">Margin</TableHead>}
+                    {showField("quantity") && <TableHead className="text-right">Stock</TableHead>}
+                    {showField("actions") && <TableHead className="text-right">Actions</TableHead>}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -483,56 +516,68 @@ export default function Medicines() {
 
                     return (
                       <TableRow key={medicine.id} data-testid={`row-medicine-${medicine.id}`}>
-                        <TableCell className="font-medium">{medicine.name}</TableCell>
-                        <TableCell>
-                          <Badge variant={medicine.type === "Equipment" ? "outline" : "secondary"}>
-                            {medicine.type === "Equipment" ? "Surgery Equipment" : "Medicine"}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-muted-foreground">{medicine.vendorName || "—"}</TableCell>
-                        <TableCell className="text-right">
-                          ₹{medicine.purchaseCost.toFixed(2)}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          ₹{medicine.sellingPrice.toFixed(2)}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <span className="text-primary">
-                            ₹{margin.toFixed(2)} ({marginPercent}%)
-                          </span>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          {medicine.quantity <= 3 ? (
-                            <Badge variant="destructive">{medicine.quantity}</Badge>
-                          ) : (
-                            <Badge variant="secondary">{medicine.quantity}</Badge>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex justify-end gap-1">
-                            {canEdit && (
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => openEditDialog(medicine)}
-                                data-testid={`button-edit-medicine-${medicine.id}`}
-                              >
-                                <Edit2 className="w-4 h-4" />
-                              </Button>
+                        {showField("name") && <TableCell className="font-medium">{medicine.name}</TableCell>}
+                        {showField("type") && (
+                          <TableCell>
+                            <Badge variant={medicine.type === "Equipment" ? "outline" : "secondary"}>
+                              {medicine.type === "Equipment" ? "Surgery Equipment" : "Medicine"}
+                            </Badge>
+                          </TableCell>
+                        )}
+                        {showField("vendorName") && <TableCell className="text-muted-foreground">{medicine.vendorName || "—"}</TableCell>}
+                        {showField("purchaseCost") && (
+                          <TableCell className="text-right">
+                            ₹{medicine.purchaseCost.toFixed(2)}
+                          </TableCell>
+                        )}
+                        {showField("sellingPrice") && (
+                          <TableCell className="text-right">
+                            ₹{medicine.sellingPrice.toFixed(2)}
+                          </TableCell>
+                        )}
+                        {showField("margin") && (
+                          <TableCell className="text-right">
+                            <span className="text-primary">
+                              ₹{margin.toFixed(2)} ({marginPercent}%)
+                            </span>
+                          </TableCell>
+                        )}
+                        {showField("quantity") && (
+                          <TableCell className="text-right">
+                            {medicine.quantity <= 3 ? (
+                              <Badge variant="destructive">{medicine.quantity}</Badge>
+                            ) : (
+                              <Badge variant="secondary">{medicine.quantity}</Badge>
                             )}
-                            {canDelete && (
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="text-destructive"
-                                onClick={() => setDeletingMedicine(medicine)}
-                                data-testid={`button-delete-medicine-${medicine.id}`}
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </Button>
-                            )}
-                          </div>
-                        </TableCell>
+                          </TableCell>
+                        )}
+                        {showField("actions") && (
+                          <TableCell className="text-right">
+                            <div className="flex justify-end gap-1">
+                              {canEdit && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => openEditDialog(medicine)}
+                                  data-testid={`button-edit-medicine-${medicine.id}`}
+                                >
+                                  <Edit2 className="w-4 h-4" />
+                                </Button>
+                              )}
+                              {canDelete && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="text-destructive"
+                                  onClick={() => setDeletingMedicine(medicine)}
+                                  data-testid={`button-delete-medicine-${medicine.id}`}
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </Button>
+                              )}
+                            </div>
+                          </TableCell>
+                        )}
                       </TableRow>
                     );
                   })}

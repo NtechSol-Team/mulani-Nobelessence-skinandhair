@@ -1,11 +1,10 @@
 import { z } from "zod";
 
-// User Schema
 export interface User {
   id: string;
   username: string;
   role: "SuperAdmin" | "Staff";
-  permissions?: Record<string, { view: boolean; add: boolean; edit: boolean; delete: boolean }>;
+  permissions?: Record<string, { view: boolean; add: boolean; edit: boolean; delete: boolean; fields?: Record<string, boolean> }>;
   createdAt: string;
 }
 
@@ -18,6 +17,7 @@ export const registerSchema = z.object({
     add: z.boolean().default(false),
     edit: z.boolean().default(false),
     delete: z.boolean().default(false),
+    fields: z.record(z.boolean()).optional(),
   })).optional().default({}),
 });
 
