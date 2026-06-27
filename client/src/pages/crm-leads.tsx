@@ -42,8 +42,10 @@ export default function CRMLeads() {
   const [search, setSearch] = useState("");
   const [selectedStatus, setSelectedStatus] = useState("All");
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isInteractionDialogOpen, setIsInteractionDialogOpen] = useState(false);
   const [activeLead, setActiveLead] = useState<Lead | null>(null);
+  const [editingLead, setEditingLead] = useState<Lead | null>(null);
   const [editingInteraction, setEditingInteraction] = useState<CRMInteraction | null>(null);
   const [viewMode, setViewMode] = useState<"card" | "list">("card");
   const [expandedLeads, setExpandedLeads] = useState<string[]>([]);
@@ -86,6 +88,15 @@ export default function CRMLeads() {
   });
 
   const form = useForm({
+    defaultValues: {
+      name: "",
+      phone: "",
+      source: "Instagram",
+      notes: "",
+    },
+  });
+
+  const editForm = useForm({
     defaultValues: {
       name: "",
       phone: "",
@@ -140,6 +151,30 @@ export default function CRMLeads() {
         title: "Lead Updated",
         description: "Lead status has been changed successfully.",
       });
+    },
+  });
+
+  const updateLeadMutation = useMutation({
+    mutationFn: async (data: any) => {
+      if (!editingLead) return;
+      return await apiRequest("PATCH", `/api/crm/leads/${editingLead.id}`, {
+        ...editingLead,
+        name: data.name,
+        phone: data.phone,
+        source: data.source,
+        notes: data.notes,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/leads"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/stats"] });
+      toast({
+        title: "Lead Updated",
+        description: "CRM lead has been updated successfully.",
+      });
+      setIsEditDialogOpen(false);
+      setEditingLead(null);
+      editForm.reset();
     },
   });
 
@@ -230,6 +265,17 @@ export default function CRMLeads() {
         lead.source
       )}`
     );
+  };
+
+  const handleEditClick = (lead: Lead) => {
+    setEditingLead(lead);
+    editForm.reset({
+      name: lead.name,
+      phone: lead.phone || "",
+      source: lead.source || "Instagram",
+      notes: lead.notes || "",
+    });
+    setIsEditDialogOpen(true);
   };
 
   const filteredLeads = leads.filter((lead) => {
@@ -515,6 +561,16 @@ export default function CRMLeads() {
                     >
                       <MessageSquare className="w-4 h-4" />
                     </Button>
+
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-8 w-8 p-0"
+                      onClick={() => handleEditClick(lead)}
+                      title="Edit Lead"
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </Button>
                   </div>
 
                   <div className="flex items-center gap-1.5">
@@ -646,6 +702,15 @@ export default function CRMLeads() {
                             title="Log Contact Call"
                           >
                             <MessageSquare className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-8 w-8 p-0"
+                            onClick={() => handleEditClick(lead)}
+                            title="Edit Lead"
+                          >
+                            <Pencil className="w-4 h-4" />
                           </Button>
                           {lead.status !== "Converted" && (
                             <Button
@@ -798,6 +863,65 @@ export default function CRMLeads() {
                 <Button type="button" variant="outline" onClick={() => setIsInteractionDialogOpen(false)}>Cancel</Button>
                 <Button type="submit" disabled={addInteractionMutation.isPending || updateInteractionMutation.isPending}>
                   {addInteractionMutation.isPending || updateInteractionMutation.isPending ? "Saving..." : editingInteraction ? "Save Changes" : "Log Contact"}
+                </Button>
+              </div>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Lead Dialog */}
+      <Dialog open={isEditDialogOpen} onOpenChange={(open) => {
+        setIsEditDialogOpen(open);
+        if (!open) {
+          setEditingLead(null);
+          editForm.reset();
+        }
+      }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit CRM Lead</DialogTitle>
+          </DialogHeader>
+          <Form {...editForm}>
+            <form
+              onSubmit={editForm.handleSubmit((data) => updateLeadMutation.mutate(data))}
+              className="space-y-4"
+            >
+              <div>
+                <FormLabel>Name</FormLabel>
+                <Input placeholder="Lead's name" {...editForm.register("name")} required />
+              </div>
+              <div>
+                <FormLabel>Phone Number (Optional)</FormLabel>
+                <Input placeholder="10-digit number" type="tel" {...editForm.register("phone")} />
+              </div>
+              <div>
+                <FormLabel>Acquisition Source</FormLabel>
+                <select
+                  className="w-full h-10 border rounded-md px-3 bg-background"
+                  {...editForm.register("source")}
+                >
+                  <option value="Walk-in">Walk-in</option>
+                  <option value="Google Search">Google Search</option>
+                  <option value="Instagram">Instagram</option>
+                  <option value="Facebook">Facebook</option>
+                  <option value="Friend Referral">Friend Referral</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+              <div>
+                <FormLabel>Lead Notes / Inquiry Details</FormLabel>
+                <Textarea placeholder="e.g. interested in laser treatment price..." {...editForm.register("notes")} />
+              </div>
+              <div className="flex justify-end gap-3 pt-2">
+                <Button type="button" variant="outline" onClick={() => {
+                  setIsEditDialogOpen(false);
+                  setEditingLead(null);
+                }}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={updateLeadMutation.isPending}>
+                  {updateLeadMutation.isPending ? "Saving..." : "Save Changes"}
                 </Button>
               </div>
             </form>
