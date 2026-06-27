@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
-import { Plus, Search, Calendar, CheckSquare, Square, Trash2, AlertCircle, Clock, Link as LinkIcon, Phone } from "lucide-react";
+import { Plus, Search, Calendar, CheckSquare, Square, Trash2, AlertCircle, Clock, Link as LinkIcon, Phone, MessageSquare } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,7 +18,7 @@ import {
 import { Form, FormLabel } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import type { CRMTask, Patient, Lead } from "@shared/schema";
+import type { CRMTask, Patient, Lead, CRMInteraction } from "@shared/schema";
 import { extractPaginatedData } from "@/lib/utils";
 import { format } from "date-fns";
 
@@ -33,6 +33,32 @@ export default function CRMTasks() {
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [taskToLog, setTaskToLog] = useState<CRMTask | null>(null);
   const [isTaskLogDialogOpen, setIsTaskLogDialogOpen] = useState(false);
+  const [expandedTasks, setExpandedTasks] = useState<string[]>([]);
+  const [hoveredTask, setHoveredTask] = useState<string | null>(null);
+  const collapseTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const toggleTaskExpand = (taskId: string) => {
+    setExpandedTasks((prev) =>
+      prev.includes(taskId) ? prev.filter((id) => id !== taskId) : [...prev, taskId]
+    );
+  };
+
+  const handleMouseEnter = (taskId: string) => {
+    if (collapseTimeoutRef.current) {
+      clearTimeout(collapseTimeoutRef.current);
+      collapseTimeoutRef.current = null;
+    }
+    setHoveredTask(taskId);
+  };
+
+  const handleMouseLeave = () => {
+    if (collapseTimeoutRef.current) {
+      clearTimeout(collapseTimeoutRef.current);
+    }
+    collapseTimeoutRef.current = setTimeout(() => {
+      setHoveredTask(null);
+    }, 200);
+  };
 
   const { data: tasks = [], isLoading } = useQuery<CRMTask[]>({
     queryKey: ["/api/crm/tasks"],
@@ -45,6 +71,10 @@ export default function CRMTasks() {
 
   const { data: leads = [] } = useQuery<Lead[]>({
     queryKey: ["/api/crm/leads"],
+  });
+
+  const { data: interactions = [] } = useQuery<CRMInteraction[]>({
+    queryKey: ["/api/crm/interactions"],
   });
 
   const form = useForm({
@@ -459,117 +489,176 @@ export default function CRMTasks() {
           {filteredTasks.map((task) => {
             const isTaskPending = task.status === "Pending";
             const overdue = isTaskPending && isOverdue(task.dueDate);
+            const taskInteractions = interactions.filter((i) => {
+              if (task.patientId && i.patientId === task.patientId) return true;
+              if (task.leadId && i.leadId === task.leadId) return true;
+              return false;
+            });
+            const isExpanded = expandedTasks.includes(task.id) || hoveredTask === task.id;
 
             return (
-              <div
-                key={task.id}
-                className={`flex flex-col sm:flex-row sm:items-center justify-between p-4 rounded-lg border bg-card hover-elevate transition-all gap-4 ${
-                  overdue ? "border-rose-200 bg-rose-50/20" : ""
-                }`}
-              >
-                <div className="flex items-start gap-3">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-6 w-6 p-0 mt-0.5"
-                    onClick={() => {
-                      if (isTaskPending && (task.patientId || task.leadId)) {
-                        setTaskToLog(task);
-                        taskInteractionForm.reset({
-                          date: format(new Date(), "yyyy-MM-dd"),
-                          channel: "Call",
-                          notes: "",
-                          outcome: "",
-                          completeTask: true,
-                        });
-                        setIsTaskLogDialogOpen(true);
-                      } else {
-                        updateTaskStatusMutation.mutate({
-                          id: task.id,
-                          status: isTaskPending ? "Completed" : "Pending",
-                        });
-                      }
-                    }}
-                  >
-                    {!isTaskPending ? (
-                      <CheckSquare className="w-5 h-5 text-green-500" />
-                    ) : (
-                      <Square className="w-5 h-5 text-muted-foreground" />
-                    )}
-                  </Button>
-                  <div className="space-y-1">
-                    <p
-                      className={`text-sm font-medium ${
-                        !isTaskPending ? "line-through text-muted-foreground" : "text-foreground"
-                      }`}
+              <div key={task.id} className="space-y-2">
+                <div
+                  className={`flex flex-col sm:flex-row sm:items-center justify-between p-4 rounded-lg border bg-card hover-elevate transition-all gap-4 ${
+                    overdue ? "border-rose-200 bg-rose-50/20" : ""
+                  }`}
+                >
+                  <div className="flex items-start gap-3">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 p-0 mt-0.5"
+                      onClick={() => {
+                        if (isTaskPending && (task.patientId || task.leadId)) {
+                          setTaskToLog(task);
+                          taskInteractionForm.reset({
+                            date: format(new Date(), "yyyy-MM-dd"),
+                            channel: "Call",
+                            notes: "",
+                            outcome: "",
+                            completeTask: true,
+                          });
+                          setIsTaskLogDialogOpen(true);
+                        } else {
+                          updateTaskStatusMutation.mutate({
+                            id: task.id,
+                            status: isTaskPending ? "Completed" : "Pending",
+                          });
+                        }
+                      }}
                     >
-                      {task.description}
-                    </p>
+                      {!isTaskPending ? (
+                        <CheckSquare className="w-5 h-5 text-green-500" />
+                      ) : (
+                        <Square className="w-5 h-5 text-muted-foreground" />
+                      )}
+                    </Button>
                     
-                    {/* Date and link targets badges */}
-                    <div className="flex flex-wrap items-center gap-2.5 text-xs text-muted-foreground">
-                      <span className={`flex items-center gap-1 ${overdue ? "text-rose-600 font-semibold" : ""}`}>
-                        <Calendar className="w-3.5 h-3.5" />
-                        Due: {format(new Date(task.dueDate), "dd MMM yyyy")}
-                        {overdue && " (Overdue)"}
-                      </span>
+                    {(task.patientId || task.leadId) && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 p-0 mt-0.5 text-muted-foreground relative"
+                        onClick={() => toggleTaskExpand(task.id)}
+                        onMouseEnter={() => handleMouseEnter(task.id)}
+                        onMouseLeave={handleMouseLeave}
+                        title="Hover to view logs inline, Click to keep open"
+                      >
+                        <MessageSquare className={`w-3.5 h-3.5 ${taskInteractions.length > 0 ? "text-primary" : "opacity-40"}`} />
+                        {taskInteractions.length > 0 && (
+                          <span className="absolute -top-1 -right-1 bg-primary text-[8px] text-primary-foreground rounded-full w-3.5 h-3.5 flex items-center justify-center font-bold">
+                            {taskInteractions.length}
+                          </span>
+                        )}
+                      </Button>
+                    )}
 
-                      {task.patientId && (
-                        <span className="flex items-center gap-1 bg-sky-50 text-sky-600 px-1.5 py-0.5 rounded text-[10px] border border-sky-100 font-medium">
-                          <LinkIcon className="w-3 h-3" />
-                          Patient: {task.patientName}
+                    <div className="space-y-1">
+                      <p
+                        className={`text-sm font-medium ${
+                          !isTaskPending ? "line-through text-muted-foreground" : "text-foreground"
+                        }`}
+                      >
+                        {task.description}
+                      </p>
+                      
+                      {/* Date and link targets badges */}
+                      <div className="flex flex-wrap items-center gap-2.5 text-xs text-muted-foreground">
+                        <span className={`flex items-center gap-1 ${overdue ? "text-rose-600 font-semibold" : ""}`}>
+                          <Calendar className="w-3.5 h-3.5" />
+                          Due: {format(new Date(task.dueDate), "dd MMM yyyy")}
+                          {overdue && " (Overdue)"}
                         </span>
-                      )}
 
-                      {task.leadId && (
-                        <span className="flex items-center gap-1 bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded text-[10px] border border-amber-100 font-medium">
-                          <LinkIcon className="w-3 h-3" />
-                          Lead: {task.leadName}
-                        </span>
-                      )}
+                        {task.patientId && (
+                          <span className="flex items-center gap-1 bg-sky-50 text-sky-600 px-1.5 py-0.5 rounded text-[10px] border border-sky-100 font-medium">
+                            <LinkIcon className="w-3 h-3" />
+                            Patient: {task.patientName}
+                          </span>
+                        )}
+
+                        {task.leadId && (
+                          <span className="flex items-center gap-1 bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded text-[10px] border border-amber-100 font-medium">
+                            <LinkIcon className="w-3 h-3" />
+                            Lead: {task.leadName}
+                          </span>
+                        )}
+                      </div>
                     </div>
+                  </div>
+
+                  <div className="flex items-center gap-3 self-end sm:self-auto">
+                    <Badge variant="outline" className={getPriorityColor(task.priority)}>
+                      {task.priority} Priority
+                    </Badge>
+                    {isTaskPending && (task.patientId || task.leadId) && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-8 gap-1.5 text-xs text-primary border-primary/20 hover:bg-primary/5"
+                        onClick={() => {
+                          setTaskToLog(task);
+                          taskInteractionForm.reset({
+                            date: format(new Date(), "yyyy-MM-dd"),
+                            channel: "Call",
+                            notes: "",
+                            outcome: "",
+                            completeTask: true,
+                          });
+                          setIsTaskLogDialogOpen(true);
+                        }}
+                        title="Log Call / Interaction"
+                      >
+                        <Phone className="w-3.5 h-3.5" />
+                        Log Call
+                      </Button>
+                    )}
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-8 w-8 p-0 text-destructive hover:bg-destructive/10"
+                      onClick={() => {
+                        if (confirm("Delete this task reminder permanently?")) {
+                          deleteTaskMutation.mutate(task.id);
+                        }
+                      }}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-3 self-end sm:self-auto">
-                  <Badge variant="outline" className={getPriorityColor(task.priority)}>
-                    {task.priority} Priority
-                  </Badge>
-                  {isTaskPending && (task.patientId || task.leadId) && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-8 gap-1.5 text-xs text-primary border-primary/20 hover:bg-primary/5"
-                      onClick={() => {
-                        setTaskToLog(task);
-                        taskInteractionForm.reset({
-                          date: format(new Date(), "yyyy-MM-dd"),
-                          channel: "Call",
-                          notes: "",
-                          outcome: "",
-                          completeTask: true,
-                        });
-                        setIsTaskLogDialogOpen(true);
-                      }}
-                      title="Log Call / Interaction"
-                    >
-                      <Phone className="w-3.5 h-3.5" />
-                      Log Call
-                    </Button>
-                  )}
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="h-8 w-8 p-0 text-destructive hover:bg-destructive/10"
-                    onClick={() => {
-                      if (confirm("Delete this task reminder permanently?")) {
-                        deleteTaskMutation.mutate(task.id);
-                      }
-                    }}
+                {isExpanded && (task.patientId || task.leadId) && (
+                  <div
+                    className="p-4 bg-muted/10 border rounded-lg max-w-4xl mx-auto w-full space-y-2"
+                    onMouseEnter={() => handleMouseEnter(task.id)}
+                    onMouseLeave={handleMouseLeave}
                   >
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
-                </div>
+                    <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                      <MessageSquare className="w-3.5 h-3.5 text-primary" /> Full Communication Logs ({taskInteractions.length})
+                    </h4>
+                    {taskInteractions.length === 0 ? (
+                      <p className="text-xs text-muted-foreground italic font-normal">No communication logs recorded yet.</p>
+                    ) : (
+                      <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3 max-h-48 overflow-y-auto pr-1">
+                        {taskInteractions.map((interaction) => (
+                          <div key={interaction.id} className="p-3 bg-card border rounded flex flex-col gap-1.5 text-xs relative group">
+                            <div className="flex items-center justify-between font-medium">
+                              <span className="text-primary">{interaction.type} ({interaction.channel})</span>
+                              <div className="flex items-center gap-1">
+                                <span className="text-muted-foreground text-[10px]">{format(new Date(interaction.date), "dd MMM yyyy")}</span>
+                              </div>
+                            </div>
+                            <p className="text-foreground/80 font-normal">{interaction.notes}</p>
+                            {interaction.outcome && (
+                              <p className="text-muted-foreground italic text-[10px] mt-0.5">Outcome: {interaction.outcome}</p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             );
           })}

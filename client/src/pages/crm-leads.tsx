@@ -402,7 +402,16 @@ export default function CRMLeads() {
                 </div>
                 <div>
                   <FormLabel>Phone Number (Optional)</FormLabel>
-                  <Input placeholder="10-digit number" type="tel" {...form.register("phone")} />
+                  <Input 
+                    placeholder="10-digit number" 
+                    type="tel" 
+                    maxLength={10} 
+                    {...form.register("phone")} 
+                    onChange={(e) => {
+                      const val = e.target.value.replace(/\D/g, "").slice(0, 10);
+                      form.setValue("phone", val, { shouldValidate: true, shouldDirty: true });
+                    }}
+                  />
                 </div>
                 <div>
                   <FormLabel>Acquisition Source</FormLabel>
@@ -936,7 +945,16 @@ export default function CRMLeads() {
               </div>
               <div>
                 <FormLabel>Phone Number (Optional)</FormLabel>
-                <Input placeholder="10-digit number" type="tel" {...editForm.register("phone")} />
+                <Input 
+                  placeholder="10-digit number" 
+                  type="tel" 
+                  maxLength={10} 
+                  {...editForm.register("phone")} 
+                  onChange={(e) => {
+                    const val = e.target.value.replace(/\D/g, "").slice(0, 10);
+                    editForm.setValue("phone", val, { shouldValidate: true, shouldDirty: true });
+                  }}
+                />
               </div>
               <div>
                 <FormLabel>Acquisition Source</FormLabel>
