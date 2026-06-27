@@ -807,6 +807,13 @@ export async function registerRoutes(
   app.post("/api/crm/leads", checkPermission("crm", "add"), async (req, res) => {
     try {
       const validated = insertLeadSchema.parse(req.body);
+      if (validated.phone) {
+        const leads = await storage.getLeads();
+        const duplicate = leads.find(l => l.phone === validated.phone);
+        if (duplicate) {
+          return res.status(400).json({ error: `A lead with the phone number ${validated.phone} already exists (Name: ${duplicate.name}).` });
+        }
+      }
       const lead = await storage.createLead(validated);
       res.status(201).json(lead);
     } catch (error) {
@@ -822,6 +829,13 @@ export async function registerRoutes(
   app.patch("/api/crm/leads/:id", checkPermission("crm", "edit"), async (req, res) => {
     try {
       const validated = insertLeadSchema.parse(req.body);
+      if (validated.phone) {
+        const leads = await storage.getLeads();
+        const duplicate = leads.find(l => l.phone === validated.phone && l.id !== req.params.id);
+        if (duplicate) {
+          return res.status(400).json({ error: `A lead with the phone number ${validated.phone} already exists (Name: ${duplicate.name}).` });
+        }
+      }
       const lead = await storage.updateLead(req.params.id, validated);
       if (!lead) {
         return res.status(404).json({ error: "Lead not found" });

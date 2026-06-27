@@ -38,6 +38,28 @@ import { format } from "date-fns";
 export default function CRMLeads() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  
+  const getErrorMessage = (error: Error) => {
+    try {
+      const colIdx = error.message.indexOf(":");
+      if (colIdx !== -1) {
+        const jsonPart = error.message.substring(colIdx + 1).trim();
+        const parsed = JSON.parse(jsonPart);
+        if (parsed.error) {
+          if (typeof parsed.error === "string") {
+            return parsed.error;
+          }
+          if (Array.isArray(parsed.error)) {
+            return parsed.error.map((err: any) => err.message || JSON.stringify(err)).join(", ");
+          }
+          return JSON.stringify(parsed.error);
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+    return error.message;
+  };
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [selectedStatus, setSelectedStatus] = useState("All");
@@ -133,6 +155,13 @@ export default function CRMLeads() {
       setIsAddDialogOpen(false);
       form.reset();
     },
+    onError: (error: Error) => {
+      toast({
+        title: "Failed to Add Lead",
+        description: getErrorMessage(error),
+        variant: "destructive",
+      });
+    },
   });
 
   const updateLeadStatusMutation = useMutation({
@@ -150,6 +179,13 @@ export default function CRMLeads() {
       toast({
         title: "Lead Updated",
         description: "Lead status has been changed successfully.",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Failed to Update Status",
+        description: getErrorMessage(error),
+        variant: "destructive",
       });
     },
   });
@@ -175,6 +211,13 @@ export default function CRMLeads() {
       setIsEditDialogOpen(false);
       setEditingLead(null);
       editForm.reset();
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Failed to Update Lead",
+        description: getErrorMessage(error),
+        variant: "destructive",
+      });
     },
   });
 
