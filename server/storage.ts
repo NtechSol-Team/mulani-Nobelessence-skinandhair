@@ -1696,8 +1696,23 @@ export class PostgresStorage implements IStorage {
     );
     const bill = rows[0] ? mapBill(rows[0]) : undefined;
     if (bill) {
+      if (insertBill.paymentMode) {
+        await pool.query(
+          `UPDATE payment_ledger 
+           SET payment_mode = $1 
+           WHERE bill_id = $2 
+           AND id = (
+             SELECT id FROM payment_ledger 
+             WHERE bill_id = $2 
+             ORDER BY date ASC, id ASC 
+             LIMIT 1
+           )`,
+          [insertBill.paymentMode, dbId]
+        );
+      }
       this.cache.invalidate("bills");
       this.cache.invalidate(`bill:${bill.id}`);
+      this.cache.invalidate("payment_ledgers");
     }
     return bill;
   }

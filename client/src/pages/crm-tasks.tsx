@@ -254,6 +254,38 @@ export default function CRMTasks() {
     }
   };
 
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case "New":
+        return "bg-sky-50 text-sky-600 border-sky-200";
+      case "Hot":
+        return "bg-rose-50 text-rose-600 border-rose-200";
+      case "Warm":
+        return "bg-amber-50 text-amber-600 border-amber-200";
+      case "Cold":
+        return "bg-blue-50 text-blue-600 border-blue-200";
+      case "Converted":
+        return "bg-green-50 text-green-600 border-green-200";
+      case "Lost":
+        return "bg-gray-50 text-gray-500 border-gray-200";
+      default:
+        return "";
+    }
+  };
+
+  const getPatientStatusColor = (status: string) => {
+    switch (status) {
+      case "VIP":
+        return "bg-amber-500 text-white border-transparent hover:bg-amber-600";
+      case "Active":
+        return "bg-green-50 text-green-600 border-green-200";
+      case "Inactive":
+        return "bg-slate-50 text-slate-500 border-slate-200";
+      default:
+        return "";
+    }
+  };
+
   const isOverdue = (dateStr: string) => {
     const today = new Date().setHours(0, 0, 0, 0);
     return new Date(dateStr).getTime() < today;
@@ -553,7 +585,7 @@ export default function CRMTasks() {
                       </Button>
                     )}
 
-                    <div className="space-y-1">
+                     <div className="space-y-1">
                       <p
                         className={`text-sm font-medium ${
                           !isTaskPending ? "line-through text-muted-foreground" : "text-foreground"
@@ -561,6 +593,19 @@ export default function CRMTasks() {
                       >
                         {task.description}
                       </p>
+
+                      {(() => {
+                        const contactNumber = task.patientId 
+                          ? patients.find(p => p.id === task.patientId)?.phone 
+                          : leads.find(l => l.id === task.leadId)?.phone;
+                        if (!contactNumber) return null;
+                        return (
+                          <div className="text-base font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5 py-0.5">
+                            <Phone className="w-4 h-4 text-emerald-500 fill-emerald-500/20" />
+                            <span>{contactNumber}</span>
+                          </div>
+                        );
+                      })()}
                       
                       {/* Date and link targets badges */}
                       <div className="flex flex-wrap items-center gap-2.5 text-xs text-muted-foreground">
@@ -588,9 +633,32 @@ export default function CRMTasks() {
                   </div>
 
                   <div className="flex items-center gap-3 self-end sm:self-auto">
-                    <Badge variant="outline" className={getPriorityColor(task.priority)}>
-                      {task.priority} Priority
-                    </Badge>
+                    {(() => {
+                      if (task.leadId) {
+                        const lead = leads.find(l => l.id === task.leadId);
+                        if (lead) {
+                          return (
+                            <Badge variant="outline" className={getStatusColor(lead.status)}>
+                              {lead.status} Lead
+                            </Badge>
+                          );
+                        }
+                      } else if (task.patientId) {
+                        const patient = patients.find(p => p.id === task.patientId);
+                        if (patient) {
+                          return (
+                            <Badge variant="outline" className={getPatientStatusColor(patient.status)}>
+                              {patient.status} Patient
+                            </Badge>
+                          );
+                        }
+                      }
+                      return (
+                        <Badge variant="outline" className={getPriorityColor(task.priority)}>
+                          {task.priority} Priority
+                        </Badge>
+                      );
+                    })()}
                     {isTaskPending && (task.patientId || task.leadId) && (
                       <Button
                         size="sm"

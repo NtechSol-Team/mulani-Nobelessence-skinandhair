@@ -57,6 +57,12 @@ import {
 
 const COLORS = ["hsl(174, 55%, 42%)", "hsl(200, 60%, 50%)", "hsl(280, 55%, 55%)", "hsl(35, 80%, 55%)", "hsl(350, 70%, 55%)"];
 
+const parseLocalDate = (dateStr: string): Date => {
+  if (!dateStr) return new Date();
+  const [year, month, day] = dateStr.split("-").map(Number);
+  return new Date(year, month - 1, day, 12, 0, 0, 0);
+};
+
 export default function Reports() {
   const [dateFilter, setDateFilter] = useState("current-month");
   const [customStartDate, setCustomStartDate] = useState<string>("");
@@ -113,15 +119,15 @@ export default function Reports() {
     dateRangeStart = startOfMonth(subMonths(today, 5));
     dateRangeEnd = monthEnd;
   } else if (dateFilter === "custom" && customStartDate && customEndDate) {
-    dateRangeStart = new Date(customStartDate);
-    dateRangeEnd = new Date(customEndDate);
+    dateRangeStart = parseLocalDate(customStartDate);
+    dateRangeEnd = parseLocalDate(customEndDate);
   }
 
   const thisMonthBills = bills.filter((b) =>
-    isWithinInterval(new Date(b.date), { start: dateRangeStart, end: dateRangeEnd })
+    isWithinInterval(parseLocalDate(b.date), { start: dateRangeStart, end: dateRangeEnd })
   );
   const thisMonthExpenses = expenses.filter((e) =>
-    isWithinInterval(new Date(e.date), { start: dateRangeStart, end: dateRangeEnd })
+    isWithinInterval(parseLocalDate(e.date), { start: dateRangeStart, end: dateRangeEnd })
   );
 
   // Billed Value = sum of finalAmount for all bills in the period
@@ -132,7 +138,7 @@ export default function Reports() {
 
   // Cash Collected
   const thisMonthPayments = paymentLedgers.filter((p) =>
-    isWithinInterval(new Date(p.date), { start: dateRangeStart, end: dateRangeEnd })
+    isWithinInterval(parseLocalDate(p.date), { start: dateRangeStart, end: dateRangeEnd })
   );
   const cashPayments = thisMonthPayments.filter(p => p.paymentMode === "Cash").reduce((sum, p) => sum + p.amount, 0);
   const onlinePayments = thisMonthPayments.filter(p => p.paymentMode === "Online").reduce((sum, p) => sum + p.amount, 0);
@@ -206,7 +212,7 @@ export default function Reports() {
     const monthLabel = format(date, "MMM yyyy");
 
     const monthBills = bills.filter((b) =>
-      isWithinInterval(new Date(b.date), { start, end })
+      isWithinInterval(parseLocalDate(b.date), { start, end })
     );
 
     const medicineSales = medicines.map((medicine) => {
@@ -246,14 +252,14 @@ export default function Reports() {
     const end = endOfMonth(date);
 
     const monthBills = bills.filter((b) =>
-      isWithinInterval(new Date(b.date), { start, end })
+      isWithinInterval(parseLocalDate(b.date), { start, end })
     );
     const monthExpenses = expenses.filter((e) =>
-      isWithinInterval(new Date(e.date), { start, end })
+      isWithinInterval(parseLocalDate(e.date), { start, end })
     );
 
     const monthPayments = paymentLedgers.filter((p) =>
-      isWithinInterval(new Date(p.date), { start, end })
+      isWithinInterval(parseLocalDate(p.date), { start, end })
     );
 
     const revenue = monthPayments.reduce((sum, p) => sum + p.amount, 0);
@@ -262,7 +268,7 @@ export default function Reports() {
 
     // New patients: Registered within this month
     const newPatients = patients.filter((p) => {
-      const regDate = new Date(p.registrationDate);
+      const regDate = parseLocalDate(p.registrationDate);
       return isWithinInterval(regDate, { start, end });
     }).length;
 
@@ -271,7 +277,7 @@ export default function Reports() {
     uniquePatientIds.forEach(pid => {
       const p = patients.find(patient => patient.id === pid);
       if (p) {
-        const regDate = new Date(p.registrationDate);
+        const regDate = parseLocalDate(p.registrationDate);
         if (regDate < start) {
           repeatPatients++;
         }

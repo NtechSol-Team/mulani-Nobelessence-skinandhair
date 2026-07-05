@@ -50,6 +50,7 @@ export default function BillingCreate() {
   const [discountType, setDiscountType] = useState<"Percentage" | "INR">("Percentage");
   const [amountPaid, setAmountPaid] = useState("");
   const [paymentMode, setPaymentMode] = useState<"Cash" | "Online">("Cash");
+  const [activeMedicineSearch, setActiveMedicineSearch] = useState<number | null>(null);
 
   const [showFollowUpDialog, setShowFollowUpDialog] = useState(false);
   const [followUpPatientInfo, setFollowUpPatientInfo] = useState<{ id: string; name: string } | null>(null);
@@ -485,26 +486,75 @@ export default function BillingCreate() {
                   <div className="space-y-3">
                     {selectedMedicines.map((med, index) => (
                       <div key={index} className="p-3 bg-muted/30 rounded-lg space-y-3">
-                        <div className="flex items-center gap-2">
-                          <Select
-                            value={med.medicineId}
-                            onValueChange={(value) => updateMedicine(index, value)}
-                          >
-                            <SelectTrigger className="flex-1">
-                              <SelectValue placeholder="Select medicine" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {medicines.filter((m) => m.type !== "Equipment").map((medicine) => (
-                                <SelectItem
-                                  key={medicine.id}
-                                  value={medicine.id}
-                                  disabled={medicine.quantity === 0}
-                                >
-                                  {medicine.name} (Stock: {medicine.quantity})
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                        <div className="flex items-center gap-2 relative">
+                          <div className="relative flex-1">
+                            <Input
+                              placeholder="Search or type medicine name..."
+                              value={med.medicineName}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                const updated = [...selectedMedicines];
+                                updated[index].medicineName = val;
+                                const exactMatch = medicines.find(
+                                  (m) => m.name.toLowerCase() === val.toLowerCase() && m.type !== "Equipment"
+                                );
+                                if (exactMatch) {
+                                  updated[index].medicineId = exactMatch.id;
+                                  updated[index].unitPrice = exactMatch.sellingPrice;
+                                  updated[index].total = exactMatch.sellingPrice * updated[index].quantity;
+                                } else {
+                                  updated[index].medicineId = "";
+                                }
+                                setSelectedMedicines(updated);
+                                setActiveMedicineSearch(index);
+                              }}
+                              onFocus={() => setActiveMedicineSearch(index)}
+                              onBlur={() => {
+                                setTimeout(() => {
+                                  if (activeMedicineSearch === index) {
+                                    setActiveMedicineSearch(null);
+                                  }
+                                }, 200);
+                              }}
+                              className="w-full"
+                            />
+                            {activeMedicineSearch === index && (
+                              <div className="absolute z-50 left-0 right-0 mt-1 bg-popover text-popover-foreground border rounded-md shadow-lg max-h-60 overflow-y-auto">
+                                {medicines
+                                  .filter(
+                                    (m) =>
+                                      m.type !== "Equipment" &&
+                                      m.name.toLowerCase().includes((med.medicineName || "").toLowerCase())
+                                  )
+                                  .map((medicine) => (
+                                    <button
+                                      key={medicine.id}
+                                      type="button"
+                                      className="w-full text-left px-3 py-2 text-sm hover:bg-accent hover:text-accent-foreground flex items-center justify-between"
+                                      onMouseDown={(e) => {
+                                        e.preventDefault();
+                                        updateMedicine(index, medicine.id);
+                                        setActiveMedicineSearch(null);
+                                      }}
+                                    >
+                                      <span>{medicine.name}</span>
+                                      <span className="text-xs text-muted-foreground">
+                                        Stock: {medicine.quantity} | ₹{medicine.sellingPrice}
+                                      </span>
+                                    </button>
+                                  ))}
+                                {medicines.filter(
+                                  (m) =>
+                                    m.type !== "Equipment" &&
+                                    m.name.toLowerCase().includes((med.medicineName || "").toLowerCase())
+                                ).length === 0 && (
+                                  <div className="px-3 py-2 text-xs text-muted-foreground italic">
+                                    No medicines found
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
                           <Button
                             variant="ghost"
                             size="icon"

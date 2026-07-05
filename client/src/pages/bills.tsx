@@ -50,7 +50,7 @@ import {
   AlertDialogDescription,
   AlertDialogFooter,
 } from "@/components/ui/alert-dialog";
-import type { Bill, Medicine, Treatment, BillMedicineItem, BillTreatmentItem } from "@shared/schema";
+import type { Bill, Medicine, Treatment, BillMedicineItem, BillTreatmentItem, PaymentLedger } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { extractPaginatedData } from "@/lib/utils";
@@ -75,9 +75,14 @@ export default function BillingManage() {
   const [editingDiscount, setEditingDiscount] = useState("");
   const [editingDiscountType, setEditingDiscountType] = useState<"Percentage" | "INR">("Percentage");
   const [editingBillDate, setEditingBillDate] = useState("");
+  const [editingPaymentMode, setEditingPaymentMode] = useState<"Cash" | "Online">("Cash");
   const [dateFilter, setDateFilter] = useState("current-month");
   const [customStartDate, setCustomStartDate] = useState<string>("");
   const [customEndDate, setCustomEndDate] = useState<string>("");
+
+  const { data: paymentLedgers = [] } = useQuery<PaymentLedger[]>({
+    queryKey: ["/api/payment-ledgers"],
+  });
 
   const { data: billsResponse, isLoading: billsLoading } = useQuery({
     queryKey: ["/api/bills"],
@@ -162,6 +167,7 @@ export default function BillingManage() {
         discountType,
         finalAmount,
         amountPaid: Math.min(billToEdit.amountPaid, finalAmount),
+        paymentMode: editingPaymentMode,
       });
     },
     onSuccess: () => {
@@ -178,6 +184,7 @@ export default function BillingManage() {
       setEditingDiscount("");
       setEditingDiscountType("Percentage");
       setEditingBillDate("");
+      setEditingPaymentMode("Cash");
     },
     onError: (error: Error) => {
       toast({
@@ -222,6 +229,8 @@ export default function BillingManage() {
     setEditingDiscount(bill.discount ? bill.discount.toString() : "");
     setEditingDiscountType(bill.discountType || "Percentage");
     setEditingBillDate(bill.date);
+    const ledger = paymentLedgers.find(l => l.billId === bill.id);
+    setEditingPaymentMode(ledger ? ledger.paymentMode : "Cash");
     setIsEditBillDialogOpen(true);
   };
 
@@ -1237,6 +1246,20 @@ export default function BillingManage() {
                     <span>-₹{editBillDiscountAmount.toFixed(2)}</span>
                   </div>
                 )}
+
+                {/* Payment Mode Selector */}
+                <div className="flex items-center justify-between text-sm py-1 border-t pt-2">
+                  <span className="font-medium text-muted-foreground">Payment Mode</span>
+                  <Select value={editingPaymentMode} onValueChange={(v) => setEditingPaymentMode(v as "Cash" | "Online")}>
+                    <SelectTrigger className="w-32 h-8 bg-background">
+                      <SelectValue placeholder="Select mode" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Cash">Cash</SelectItem>
+                      <SelectItem value="Online">Online</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
 
                 <div className="flex justify-between font-bold text-lg border-t pt-2 text-primary">
                   <span>Final Amount</span>
