@@ -26,6 +26,7 @@ import { AuthProvider, useAuth } from "@/hooks/use-auth";
 import { Loader2 } from "lucide-react";
 
 import UsersPage from "@/pages/users";
+import PatientsPage from "@/pages/patients";
 
 function ProtectedRoute({ 
   component: Component, 
@@ -72,6 +73,7 @@ function Router() {
       <Route path="/auth" component={AuthPage} />
       <ProtectedRoute path="/" component={Dashboard} />
       <ProtectedRoute path="/registration" component={Registration} requiredModule="patients" />
+      <ProtectedRoute path="/patients" component={PatientsPage} requiredModule="patients" />
       <ProtectedRoute path="/patient/:id" component={PatientDetails} requiredModule="patients" />
       <ProtectedRoute path="/billing" component={BillingCreate} requiredModule="billing" />
       <ProtectedRoute path="/bills" component={BillingManage} requiredModule="billing" />

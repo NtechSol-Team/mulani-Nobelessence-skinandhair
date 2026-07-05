@@ -45,6 +45,7 @@ const navItems: NavItem[] = [
     icon: UserPlus,
     children: [
       { path: "/registration", label: "New Registration", icon: UserPlus, module: "patients" },
+      { path: "/patients", label: "View Patients", icon: Users, module: "patients" },
       { path: "/appointments", label: "Appointments", icon: Calendar, module: "appointments" },
     ]
   },
