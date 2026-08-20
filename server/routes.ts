@@ -20,6 +20,14 @@ import {
 import { z } from "zod";
 
 import { ensureAuthenticated, requireSuperAdmin, checkPermission } from "./auth";
+import { registerWhatsappWebhookRoute, registerWhatsappRoutes } from "./whatsapp/routes";
+import {
+  emitLeadCreated,
+  emitLeadStatusChanged,
+  emitPatientRegistered,
+  emitAppointmentBooked,
+  emitAppointmentStatusChanged,
+} from "./whatsapp/events";
 
 function getLocalDateString(): string {
   const d = new Date();
@@ -98,6 +106,10 @@ export async function registerRoutes(
     }
   });
 
+  // Public webhook for the QuickAuth WhatsApp provider (no session auth - the
+  // provider calls this server-to-server). Must stay before the auth gate below.
+  registerWhatsappWebhookRoute(app);
+
   // Protect all API routes registered below
   // Note: /api/login and /api/logout are registered in setupAuth() before this function
   app.use("/api", ensureAuthenticated);
@@ -133,6 +145,7 @@ export async function registerRoutes(
     try {
       const validated = insertPatientSchema.parse(req.body);
       const patient = await storage.createPatient(validated);
+      emitPatientRegistered(patient);
       res.status(201).json(patient);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -744,6 +757,7 @@ export async function registerRoutes(
       console.log("Creating appointment with body:", req.body);
       const validated = insertAppointmentSchema.parse(req.body);
       const appointment = await storage.createAppointment(validated);
+      emitAppointmentBooked(appointment);
       res.status(201).json(appointment);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -757,9 +771,13 @@ export async function registerRoutes(
   app.patch("/api/appointments/:id", checkPermission("appointments", "edit"), async (req, res) => {
     try {
       const validated = insertAppointmentSchema.parse(req.body);
+      const previous = await storage.getAppointment(req.params.id);
       const appointment = await storage.updateAppointment(req.params.id, validated);
       if (!appointment) {
         return res.status(404).json({ error: "Appointment not found" });
+      }
+      if (previous) {
+        emitAppointmentStatusChanged(appointment, previous.status);
       }
       res.json(appointment);
     } catch (error) {
@@ -815,6 +833,7 @@ export async function registerRoutes(
         }
       }
       const lead = await storage.createLead(validated);
+      emitLeadCreated(lead);
       res.status(201).json(lead);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -836,9 +855,13 @@ export async function registerRoutes(
           return res.status(400).json({ error: `A lead with the phone number ${validated.phone} already exists (Name: ${duplicate.name}).` });
         }
       }
+      const previous = await storage.getLead(req.params.id);
       const lead = await storage.updateLead(req.params.id, validated);
       if (!lead) {
         return res.status(404).json({ error: "Lead not found" });
+      }
+      if (previous) {
+        emitLeadStatusChanged(lead, previous.status);
       }
       res.json(lead);
     } catch (error) {
@@ -1091,6 +1114,9 @@ export async function registerRoutes(
       res.status(500).json({ error: "Failed to delete department" });
     }
   });
+
+  // ==================== WHATSAPP AUTOMATION ====================
+  registerWhatsappRoutes(app);
 
   return httpServer;
 }

@@ -27,6 +27,12 @@ import { Loader2 } from "lucide-react";
 
 import UsersPage from "@/pages/users";
 import PatientsPage from "@/pages/patients";
+import WhatsappDashboard from "@/pages/whatsapp-dashboard";
+import WhatsappRules from "@/pages/whatsapp-rules";
+import WhatsappRuleBuilder from "@/pages/whatsapp-rule-builder";
+import WhatsappTemplates from "@/pages/whatsapp-templates";
+import WhatsappHistory from "@/pages/whatsapp-history";
+import WhatsappSettings from "@/pages/whatsapp-settings";
 
 function ProtectedRoute({ 
   component: Component, 
@@ -86,6 +92,13 @@ function Router() {
       <ProtectedRoute path="/crm" component={CRMDashboard} requiredModule="crm" />
       <ProtectedRoute path="/crm/leads" component={CRMLeads} requiredModule="crm" />
       <ProtectedRoute path="/crm/tasks" component={CRMTasks} requiredModule="crm" />
+      <ProtectedRoute path="/crm/whatsapp" component={WhatsappDashboard} requiredModule="whatsappAutomation" />
+      <ProtectedRoute path="/crm/whatsapp/rules" component={WhatsappRules} requiredModule="whatsappAutomation" />
+      <ProtectedRoute path="/crm/whatsapp/rules/new" component={WhatsappRuleBuilder} requiredModule="whatsappAutomation" />
+      <ProtectedRoute path="/crm/whatsapp/rules/:id/edit" component={WhatsappRuleBuilder} requiredModule="whatsappAutomation" />
+      {/* <ProtectedRoute path="/crm/whatsapp/templates" component={WhatsappTemplates} requiredModule="whatsappAutomation" /> */}
+      <ProtectedRoute path="/crm/whatsapp/history" component={WhatsappHistory} requiredModule="whatsappAutomation" />
+      <ProtectedRoute path="/crm/whatsapp/settings" component={WhatsappSettings} requiredModule="whatsappAutomation" />
       <ProtectedRoute path="/users" component={UsersPage} requireSuperAdmin />
       <Route component={NotFound} />
     </Switch>

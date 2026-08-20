@@ -17,7 +17,12 @@ import {
   Users,
   CheckSquare,
   ShieldAlert,
-  Plus
+  Plus,
+  MessageCircle,
+  Zap,
+  History,
+  Settings2,
+  FileText
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useTheme } from "@/components/theme-provider";
@@ -74,6 +79,17 @@ const navItems: NavItem[] = [
       { path: "/crm", label: "CRM Dashboard", icon: LayoutDashboard, module: "crm" },
       { path: "/crm/leads", label: "Leads Manager", icon: Users, module: "crm" },
       { path: "/crm/tasks", label: "CRM Tasks", icon: CheckSquare, module: "crm" },
+    ]
+  },
+  {
+    label: "WhatsApp Automation",
+    icon: MessageCircle,
+    children: [
+      { path: "/crm/whatsapp", label: "Automation Dashboard", icon: LayoutDashboard, module: "whatsappAutomation" },
+      { path: "/crm/whatsapp/rules", label: "Automation Rules", icon: Zap, module: "whatsappAutomation" },
+      // { path: "/crm/whatsapp/templates", label: "Templates", icon: FileText, module: "whatsappAutomation" },
+      { path: "/crm/whatsapp/history", label: "Execution History", icon: History, module: "whatsappAutomation" },
+      { path: "/crm/whatsapp/settings", label: "WhatsApp Settings", icon: Settings2, module: "whatsappAutomation" },
     ]
   },
   { path: "/reports", label: "Reports", icon: BarChart3, module: "reports" },

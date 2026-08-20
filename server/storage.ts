@@ -27,9 +27,26 @@ import {
   type InsertDepartment,
   type User,
   type RegisterInput,
+  type WhatsappSettings,
+  type UpdateSettings,
+  type WhatsappTemplate,
+  type WhatsappAutomationRule,
+  type WhatsappAutomationRuleDetail,
+  type WhatsappAutomationCondition,
+  type WhatsappAutomationStep,
+  type InsertRule,
+  type StopConditionType,
+  type WhatsappAutomationRun,
+  type AutomationRunStatus,
+  type WhatsappMessageJob,
+  type MessageJobStatus,
+  type MessageType,
+  type WhatsappConversationSession,
+  type WhatsappDashboardStats,
+  type WhatsappEntityType,
 } from "@shared/schema";
 import { randomUUID } from "crypto";
-import { Pool } from "pg";
+import { Pool, type PoolClient } from "pg";
 
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) {
@@ -379,6 +396,150 @@ const createTableStatements = [
     permissions JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ DEFAULT NOW()
   )`,
+
+  // ==================== WHATSAPP AUTOMATION ====================
+  `CREATE TABLE IF NOT EXISTS whatsapp_settings (
+    id INTEGER PRIMARY KEY DEFAULT 1,
+    enabled BOOLEAN NOT NULL DEFAULT true,
+    business_hours_enabled BOOLEAN NOT NULL DEFAULT true,
+    business_hours_start TEXT NOT NULL DEFAULT '09:00',
+    business_hours_end TEXT NOT NULL DEFAULT '20:00',
+    timezone TEXT NOT NULL DEFAULT 'Asia/Kolkata',
+    max_per_contact_per_day INTEGER NOT NULL DEFAULT 3,
+    min_gap_minutes INTEGER NOT NULL DEFAULT 30,
+    CONSTRAINT whatsapp_settings_singleton CHECK (id = 1)
+  )`,
+  `CREATE TABLE IF NOT EXISTS whatsapp_templates (
+    template_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    language TEXT NOT NULL DEFAULT 'en',
+    category TEXT NOT NULL DEFAULT 'UTILITY',
+    status TEXT NOT NULL DEFAULT 'DRAFT',
+    header_type TEXT DEFAULT '',
+    header_text TEXT DEFAULT '',
+    body TEXT NOT NULL DEFAULT '',
+    footer TEXT DEFAULT '',
+    variables JSONB NOT NULL DEFAULT '[]'::jsonb,
+    buttons JSONB NOT NULL DEFAULT '[]'::jsonb,
+    last_synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  `CREATE TABLE IF NOT EXISTS whatsapp_automation_rules (
+    id UUID PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'Inactive',
+    priority TEXT NOT NULL DEFAULT 'Normal',
+    trigger_type TEXT NOT NULL,
+    trigger_config JSONB NOT NULL DEFAULT '{}'::jsonb,
+    target_audience TEXT NOT NULL DEFAULT 'primary_entity',
+    custom_phone TEXT NOT NULL DEFAULT '',
+    business_hours_only BOOLEAN NOT NULL DEFAULT true,
+    max_per_contact_per_day INTEGER NOT NULL DEFAULT 0,
+    created_by TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  `CREATE INDEX IF NOT EXISTS whatsapp_rules_trigger_idx ON whatsapp_automation_rules(trigger_type, status)`,
+  `CREATE TABLE IF NOT EXISTS whatsapp_automation_conditions (
+    id UUID PRIMARY KEY,
+    rule_id UUID REFERENCES whatsapp_automation_rules(id) ON DELETE CASCADE,
+    field TEXT NOT NULL,
+    operator TEXT NOT NULL,
+    value TEXT NOT NULL DEFAULT '',
+    group_no INTEGER NOT NULL DEFAULT 0
+  )`,
+  `CREATE INDEX IF NOT EXISTS whatsapp_conditions_rule_idx ON whatsapp_automation_conditions(rule_id)`,
+  `CREATE TABLE IF NOT EXISTS whatsapp_automation_steps (
+    id UUID PRIMARY KEY,
+    rule_id UUID REFERENCES whatsapp_automation_rules(id) ON DELETE CASCADE,
+    step_order INTEGER NOT NULL DEFAULT 0,
+    delay_type TEXT NOT NULL DEFAULT 'immediate',
+    delay_unit TEXT NOT NULL DEFAULT 'hours',
+    delay_value INTEGER NOT NULL DEFAULT 0,
+    specific_time TEXT NOT NULL DEFAULT '',
+    template_id TEXT NOT NULL DEFAULT '',
+    message_type TEXT NOT NULL DEFAULT 'auto',
+    variable_mapping JSONB NOT NULL DEFAULT '{}'::jsonb
+  )`,
+  `CREATE INDEX IF NOT EXISTS whatsapp_steps_rule_idx ON whatsapp_automation_steps(rule_id)`,
+  `CREATE TABLE IF NOT EXISTS whatsapp_automation_stop_conditions (
+    id UUID PRIMARY KEY,
+    rule_id UUID REFERENCES whatsapp_automation_rules(id) ON DELETE CASCADE,
+    type TEXT NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS whatsapp_stop_conditions_rule_idx ON whatsapp_automation_stop_conditions(rule_id)`,
+  `CREATE TABLE IF NOT EXISTS whatsapp_automation_runs (
+    id UUID PRIMARY KEY,
+    rule_id UUID REFERENCES whatsapp_automation_rules(id) ON DELETE CASCADE,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    trigger_event TEXT NOT NULL,
+    current_step INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'active',
+    stop_reason TEXT NOT NULL DEFAULT '',
+    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(rule_id, entity_type, entity_id, trigger_event)
+  )`,
+  `CREATE INDEX IF NOT EXISTS whatsapp_runs_entity_idx ON whatsapp_automation_runs(entity_type, entity_id)`,
+  `CREATE INDEX IF NOT EXISTS whatsapp_runs_status_idx ON whatsapp_automation_runs(status)`,
+  `CREATE TABLE IF NOT EXISTS whatsapp_message_jobs (
+    id UUID PRIMARY KEY,
+    run_id UUID REFERENCES whatsapp_automation_runs(id) ON DELETE CASCADE,
+    step_id UUID REFERENCES whatsapp_automation_steps(id) ON DELETE SET NULL,
+    rule_id UUID REFERENCES whatsapp_automation_rules(id) ON DELETE SET NULL,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    phone TEXT NOT NULL,
+    template_id TEXT NOT NULL DEFAULT '',
+    message_type TEXT NOT NULL DEFAULT 'template',
+    variables JSONB NOT NULL DEFAULT '{}'::jsonb,
+    rendered_preview TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending',
+    scheduled_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    sent_at TIMESTAMPTZ,
+    delivered_at TIMESTAMPTZ,
+    read_at TIMESTAMPTZ,
+    provider_message_id TEXT,
+    campaign_id TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    max_attempts INTEGER NOT NULL DEFAULT 3,
+    last_error TEXT,
+    idempotency_key TEXT NOT NULL UNIQUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  `CREATE INDEX IF NOT EXISTS whatsapp_jobs_status_idx ON whatsapp_message_jobs(status, scheduled_at)`,
+  `CREATE INDEX IF NOT EXISTS whatsapp_jobs_entity_idx ON whatsapp_message_jobs(entity_type, entity_id)`,
+  `CREATE INDEX IF NOT EXISTS whatsapp_jobs_phone_idx ON whatsapp_message_jobs(phone)`,
+  `CREATE TABLE IF NOT EXISTS whatsapp_conversation_sessions (
+    phone TEXT PRIMARY KEY,
+    last_inbound_at TIMESTAMPTZ,
+    last_outbound_at TIMESTAMPTZ,
+    window_expires_at TIMESTAMPTZ,
+    status TEXT NOT NULL DEFAULT 'closed'
+  )`,
+  `CREATE TABLE IF NOT EXISTS whatsapp_opt_outs (
+    phone TEXT PRIMARY KEY,
+    opted_out_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    source TEXT NOT NULL DEFAULT ''
+  )`,
+  `CREATE TABLE IF NOT EXISTS whatsapp_automation_audit_log (
+    id UUID PRIMARY KEY,
+    action TEXT NOT NULL,
+    rule_id UUID,
+    user_id TEXT DEFAULT '',
+    username TEXT DEFAULT '',
+    detail JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  `CREATE INDEX IF NOT EXISTS whatsapp_audit_rule_idx ON whatsapp_automation_audit_log(rule_id)`,
+  `CREATE TABLE IF NOT EXISTS whatsapp_webhook_events (
+    id UUID PRIMARY KEY,
+    payload JSONB NOT NULL,
+    processed BOOLEAN NOT NULL DEFAULT false,
+    note TEXT DEFAULT '',
+    received_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
 ];
 
 async function ensureTables(): Promise<void> {
@@ -456,6 +617,104 @@ async function ensureTables(): Promise<void> {
       console.error("Error backfilling payment_ledger:", e);
     }
   }
+
+  await ensureWhatsappDefaults();
+}
+
+async function ensureWhatsappDefaults(): Promise<void> {
+  // Seed the single settings row.
+  await pool.query(
+    `INSERT INTO whatsapp_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING`
+  );
+
+  // Seed a handful of representative starter rules (spec section 24), left
+  // Inactive since they reference placeholder template names the clinic
+  // hasn't created/approved yet. Idempotent: only runs if no rules exist.
+  const { rowCount } = await pool.query("SELECT 1 FROM whatsapp_automation_rules LIMIT 1");
+  if (rowCount) return;
+
+  type StarterStep = {
+    delayType: string; delayUnit?: string; delayValue?: number; specificTime?: string;
+    templateId: string; messageType?: string; variableMapping?: Record<string, string>;
+  };
+  type StarterRule = {
+    name: string; description: string; priority: string; triggerType: string;
+    triggerConfig?: Record<string, any>;
+    steps: StarterStep[];
+    stopConditions?: string[];
+  };
+
+  const starters: StarterRule[] = [
+    {
+      name: "New Lead Welcome",
+      description: "Sends an immediate WhatsApp welcome the moment a new lead is added to the CRM.",
+      priority: "High",
+      triggerType: "lead_created",
+      steps: [{ delayType: "immediate", templateId: "new_lead_welcome", variableMapping: { name: "lead.name" } }],
+      stopConditions: ["lead_replied", "lead_converted", "lead_lost", "opted_out"],
+    },
+    {
+      name: "Lead Follow-up (Day 1)",
+      description: "One day after a lead is created, follow up if they haven't booked an appointment yet.",
+      priority: "Normal",
+      triggerType: "lead_created",
+      steps: [{ delayType: "after", delayUnit: "days", delayValue: 1, templateId: "lead_followup_1", variableMapping: { name: "lead.name" } }],
+      stopConditions: ["lead_replied", "appointment_booked", "lead_converted", "lead_lost", "opted_out"],
+    },
+    {
+      name: "Appointment Confirmation",
+      description: "Confirms the appointment immediately after it is booked.",
+      priority: "High",
+      triggerType: "appointment_booked",
+      steps: [{ delayType: "immediate", templateId: "appointment_confirmation", variableMapping: { name: "patient.name", date: "appointment.date", time: "appointment.time" } }],
+      stopConditions: ["opted_out"],
+    },
+    {
+      name: "Appointment Reminder (24h Before)",
+      description: "Reminds the patient 24 hours before their scheduled appointment.",
+      priority: "High",
+      triggerType: "appointment_reminder",
+      steps: [{ delayType: "after", delayUnit: "days", delayValue: 1, templateId: "appointment_reminder", variableMapping: { name: "patient.name", date: "appointment.date", time: "appointment.time" } }],
+      stopConditions: ["opted_out"],
+    },
+    {
+      name: "Post-Appointment Feedback",
+      description: "Asks for feedback two hours after an appointment is marked Completed.",
+      priority: "Normal",
+      triggerType: "appointment_completed",
+      steps: [{ delayType: "after", delayUnit: "hours", delayValue: 2, templateId: "post_appointment_feedback", variableMapping: { name: "patient.name" } }],
+      stopConditions: ["opted_out"],
+    },
+  ];
+
+  // Atomic: a mid-loop failure (e.g. a transient connection hiccup) must
+  // never leave a partially-seeded, inconsistent set of example rules behind.
+  await withTransaction(async (client) => {
+    for (const starter of starters) {
+      const ruleId = randomUUID();
+      await client.query(
+        `INSERT INTO whatsapp_automation_rules
+          (id, name, description, status, priority, trigger_type, trigger_config, target_audience, custom_phone, business_hours_only, max_per_contact_per_day, created_by)
+         VALUES ($1, $2, $3, 'Inactive', $4, $5, $6, 'primary_entity', '', true, 0, 'system')`,
+        [ruleId, starter.name, starter.description, starter.priority, starter.triggerType, JSON.stringify(starter.triggerConfig || {})]
+      );
+      for (let i = 0; i < starter.steps.length; i++) {
+        const s = starter.steps[i];
+        await client.query(
+          `INSERT INTO whatsapp_automation_steps
+            (id, rule_id, step_order, delay_type, delay_unit, delay_value, specific_time, template_id, message_type, variable_mapping)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+          [randomUUID(), ruleId, i, s.delayType, s.delayUnit || "hours", s.delayValue || 0, s.specificTime || "", s.templateId, s.messageType || "auto", JSON.stringify(s.variableMapping || {})]
+        );
+      }
+      for (const stopType of starter.stopConditions || []) {
+        await client.query(
+          `INSERT INTO whatsapp_automation_stop_conditions (id, rule_id, type) VALUES ($1, $2, $3)`,
+          [randomUUID(), ruleId, stopType]
+        );
+      }
+    }
+  });
 }
 
 class DataCache {
@@ -690,6 +949,149 @@ const mapPaymentLedger = (row: DbPaymentLedgerRow): PaymentLedger => ({
   date: row.date,
   paymentMode: (row.payment_mode || "Cash") as "Cash" | "Online",
 });
+
+// ==================== WHATSAPP AUTOMATION: row types & mappers ====================
+
+function parseJsonColumn<T>(value: any, fallback: T): T {
+  if (value === null || value === undefined) return fallback;
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value) as T;
+    } catch {
+      return fallback;
+    }
+  }
+  return value as T;
+}
+
+const mapSettings = (row: any): WhatsappSettings => ({
+  enabled: !!row.enabled,
+  businessHoursEnabled: !!row.business_hours_enabled,
+  businessHoursStart: row.business_hours_start,
+  businessHoursEnd: row.business_hours_end,
+  timezone: row.timezone,
+  maxPerContactPerDay: row.max_per_contact_per_day,
+  minGapMinutes: row.min_gap_minutes,
+});
+
+const mapWhatsappTemplate = (row: any): WhatsappTemplate => ({
+  templateId: row.template_id,
+  name: row.name,
+  language: row.language,
+  category: row.category,
+  status: row.status,
+  headerType: row.header_type || "",
+  headerText: row.header_text || "",
+  body: row.body || "",
+  footer: row.footer || "",
+  variables: parseJsonColumn(row.variables, []),
+  buttons: parseJsonColumn(row.buttons, []),
+  lastSyncedAt: row.last_synced_at,
+});
+
+const mapRule = (row: any): WhatsappAutomationRule => ({
+  id: normalizeId(row.id),
+  name: row.name,
+  description: row.description || "",
+  status: row.status,
+  priority: row.priority,
+  triggerType: row.trigger_type,
+  triggerConfig: parseJsonColumn(row.trigger_config, {}),
+  targetAudience: row.target_audience,
+  customPhone: row.custom_phone || "",
+  businessHoursOnly: !!row.business_hours_only,
+  maxPerContactPerDay: row.max_per_contact_per_day || 0,
+  createdBy: row.created_by || "",
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+});
+
+const mapCondition = (row: any): WhatsappAutomationCondition => ({
+  id: normalizeId(row.id),
+  ruleId: normalizeId(row.rule_id),
+  field: row.field,
+  operator: row.operator,
+  value: row.value || "",
+  groupNo: row.group_no || 0,
+});
+
+const mapStep = (row: any): WhatsappAutomationStep => ({
+  id: normalizeId(row.id),
+  ruleId: normalizeId(row.rule_id),
+  stepOrder: row.step_order,
+  delayType: row.delay_type,
+  delayUnit: row.delay_unit,
+  delayValue: row.delay_value,
+  specificTime: row.specific_time || "",
+  templateId: row.template_id || "",
+  messageType: row.message_type,
+  variableMapping: parseJsonColumn(row.variable_mapping, {}),
+});
+
+const mapRun = (row: any): WhatsappAutomationRun => ({
+  id: normalizeId(row.id),
+  ruleId: normalizeId(row.rule_id),
+  ruleName: row.rule_name,
+  entityType: row.entity_type,
+  entityId: normalizeId(row.entity_id),
+  entityName: row.entity_name,
+  triggerEvent: row.trigger_event,
+  currentStep: row.current_step,
+  status: row.status,
+  stopReason: row.stop_reason || "",
+  startedAt: row.started_at,
+  updatedAt: row.updated_at,
+});
+
+const mapJob = (row: any): WhatsappMessageJob => ({
+  id: normalizeId(row.id),
+  runId: normalizeId(row.run_id),
+  stepId: row.step_id ? normalizeId(row.step_id) : "",
+  ruleId: row.rule_id ? normalizeId(row.rule_id) : "",
+  ruleName: row.rule_name,
+  entityType: row.entity_type,
+  entityId: normalizeId(row.entity_id),
+  entityName: row.entity_name,
+  phone: row.phone,
+  templateId: row.template_id || "",
+  templateName: row.template_name,
+  messageType: row.message_type,
+  variables: parseJsonColumn(row.variables, {}),
+  renderedPreview: row.rendered_preview || "",
+  status: row.status,
+  scheduledAt: row.scheduled_at,
+  sentAt: row.sent_at || undefined,
+  deliveredAt: row.delivered_at || undefined,
+  readAt: row.read_at || undefined,
+  providerMessageId: row.provider_message_id || undefined,
+  campaignId: row.campaign_id || undefined,
+  attempts: row.attempts,
+  maxAttempts: row.max_attempts,
+  lastError: row.last_error || undefined,
+});
+
+const mapConversationSession = (row: any): WhatsappConversationSession => ({
+  phone: row.phone,
+  lastInboundAt: row.last_inbound_at || undefined,
+  lastOutboundAt: row.last_outbound_at || undefined,
+  windowExpiresAt: row.window_expires_at || undefined,
+  status: row.status,
+});
+
+async function withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
 
 export class PostgresStorage implements IStorage {
   private ready: Promise<void>;
@@ -2476,6 +2878,518 @@ export class PostgresStorage implements IStorage {
     const dbId = this.convertId("users", id);
     const result = await pool.query("DELETE FROM users WHERE id = $1", [dbId]);
     return (result.rowCount ?? 0) > 0;
+  }
+
+  // ==================== WHATSAPP AUTOMATION ====================
+
+  // ---- Settings ----
+  async getWhatsappSettings(): Promise<WhatsappSettings> {
+    await this.waitForReady();
+    const { rows } = await pool.query(`SELECT * FROM whatsapp_settings WHERE id = 1`);
+    if (!rows[0]) {
+      await pool.query(`INSERT INTO whatsapp_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING`);
+      const { rows: retry } = await pool.query(`SELECT * FROM whatsapp_settings WHERE id = 1`);
+      return mapSettings(retry[0]);
+    }
+    return mapSettings(rows[0]);
+  }
+
+  async updateWhatsappSettings(update: UpdateSettings): Promise<WhatsappSettings> {
+    await this.waitForReady();
+    await this.getWhatsappSettings();
+    const columnMap: Record<string, string> = {
+      enabled: "enabled",
+      businessHoursEnabled: "business_hours_enabled",
+      businessHoursStart: "business_hours_start",
+      businessHoursEnd: "business_hours_end",
+      timezone: "timezone",
+      maxPerContactPerDay: "max_per_contact_per_day",
+      minGapMinutes: "min_gap_minutes",
+    };
+    const fields: string[] = [];
+    const values: any[] = [];
+    let idx = 1;
+    for (const [key, column] of Object.entries(columnMap)) {
+      const value = (update as any)[key];
+      if (value !== undefined) {
+        fields.push(`${column} = $${idx++}`);
+        values.push(value);
+      }
+    }
+    if (fields.length > 0) {
+      values.push(1);
+      await pool.query(`UPDATE whatsapp_settings SET ${fields.join(", ")} WHERE id = $${idx}`, values);
+    }
+    return this.getWhatsappSettings();
+  }
+
+  // ---- Templates (synced cache from QuickAuth) ----
+  async getWhatsappTemplates(): Promise<WhatsappTemplate[]> {
+    await this.waitForReady();
+    const { rows } = await pool.query(`SELECT * FROM whatsapp_templates ORDER BY name ASC`);
+    return rows.map(mapWhatsappTemplate);
+  }
+
+  async getWhatsappTemplate(templateId: string): Promise<WhatsappTemplate | undefined> {
+    await this.waitForReady();
+    const { rows } = await pool.query(`SELECT * FROM whatsapp_templates WHERE template_id = $1`, [templateId]);
+    return rows[0] ? mapWhatsappTemplate(rows[0]) : undefined;
+  }
+
+  async upsertWhatsappTemplate(t: WhatsappTemplate): Promise<WhatsappTemplate> {
+    await this.waitForReady();
+    const { rows } = await pool.query(
+      `INSERT INTO whatsapp_templates (template_id, name, language, category, status, header_type, header_text, body, footer, variables, buttons, last_synced_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW())
+       ON CONFLICT (template_id) DO UPDATE SET
+         name=$2, language=$3, category=$4, status=$5, header_type=$6, header_text=$7, body=$8, footer=$9, variables=$10, buttons=$11, last_synced_at=NOW()
+       RETURNING *`,
+      [t.templateId, t.name, t.language, t.category, t.status, t.headerType || "", t.headerText || "", t.body || "", t.footer || "", JSON.stringify(t.variables || []), JSON.stringify(t.buttons || [])]
+    );
+    return mapWhatsappTemplate(rows[0]);
+  }
+
+  // ---- Rules ----
+  private async insertRuleChildrenTx(client: PoolClient, ruleId: string, input: InsertRule): Promise<void> {
+    for (const c of input.conditions) {
+      await client.query(
+        `INSERT INTO whatsapp_automation_conditions (id, rule_id, field, operator, value, group_no) VALUES ($1,$2,$3,$4,$5,$6)`,
+        [randomUUID(), ruleId, c.field, c.operator, c.value, c.groupNo]
+      );
+    }
+    for (let i = 0; i < input.steps.length; i++) {
+      const s = input.steps[i];
+      await client.query(
+        `INSERT INTO whatsapp_automation_steps (id, rule_id, step_order, delay_type, delay_unit, delay_value, specific_time, template_id, message_type, variable_mapping)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+        [randomUUID(), ruleId, i, s.delayType, s.delayUnit, s.delayValue, s.specificTime, s.templateId, s.messageType, JSON.stringify(s.variableMapping || {})]
+      );
+    }
+    for (const stopType of input.stopConditions) {
+      await client.query(
+        `INSERT INTO whatsapp_automation_stop_conditions (id, rule_id, type) VALUES ($1,$2,$3)`,
+        [randomUUID(), ruleId, stopType]
+      );
+    }
+  }
+
+  async getWhatsappRules(): Promise<WhatsappAutomationRule[]> {
+    await this.waitForReady();
+    const { rows } = await pool.query(`SELECT * FROM whatsapp_automation_rules ORDER BY created_at DESC`);
+    return rows.map(mapRule);
+  }
+
+  async getWhatsappRuleDetail(id: string): Promise<WhatsappAutomationRuleDetail | undefined> {
+    await this.waitForReady();
+    const { rows } = await pool.query(`SELECT * FROM whatsapp_automation_rules WHERE id = $1`, [id]);
+    if (!rows[0]) return undefined;
+    const rule = mapRule(rows[0]);
+    const [condRes, stepRes, stopRes] = await Promise.all([
+      pool.query(`SELECT * FROM whatsapp_automation_conditions WHERE rule_id = $1 ORDER BY group_no ASC`, [id]),
+      pool.query(`SELECT * FROM whatsapp_automation_steps WHERE rule_id = $1 ORDER BY step_order ASC`, [id]),
+      pool.query(`SELECT type FROM whatsapp_automation_stop_conditions WHERE rule_id = $1`, [id]),
+    ]);
+    return {
+      ...rule,
+      conditions: condRes.rows.map(mapCondition),
+      steps: stepRes.rows.map(mapStep),
+      stopConditions: stopRes.rows.map((r) => r.type as StopConditionType),
+    };
+  }
+
+  async getActiveWhatsappRulesByTrigger(triggerType: string): Promise<WhatsappAutomationRuleDetail[]> {
+    await this.waitForReady();
+    const { rows } = await pool.query(
+      `SELECT id FROM whatsapp_automation_rules WHERE trigger_type = $1 AND status = 'Active'
+       ORDER BY CASE priority WHEN 'High' THEN 0 WHEN 'Normal' THEN 1 ELSE 2 END ASC, created_at ASC`,
+      [triggerType]
+    );
+    const details = await Promise.all(rows.map((r) => this.getWhatsappRuleDetail(normalizeId(r.id))));
+    return details.filter((d): d is WhatsappAutomationRuleDetail => !!d);
+  }
+
+  async createWhatsappRule(input: InsertRule, createdBy: string): Promise<WhatsappAutomationRuleDetail> {
+    await this.waitForReady();
+    const ruleId = randomUUID();
+    await withTransaction(async (client) => {
+      await client.query(
+        `INSERT INTO whatsapp_automation_rules
+          (id, name, description, status, priority, trigger_type, trigger_config, target_audience, custom_phone, business_hours_only, max_per_contact_per_day, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+        [ruleId, input.name, input.description, input.status, input.priority, input.triggerType, JSON.stringify(input.triggerConfig || {}), input.targetAudience, input.customPhone, input.businessHoursOnly, input.maxPerContactPerDay, createdBy]
+      );
+      await this.insertRuleChildrenTx(client, ruleId, input);
+    });
+    return (await this.getWhatsappRuleDetail(ruleId)) as WhatsappAutomationRuleDetail;
+  }
+
+  async updateWhatsappRule(id: string, input: InsertRule): Promise<WhatsappAutomationRuleDetail | undefined> {
+    await this.waitForReady();
+    const exists = await pool.query(`SELECT 1 FROM whatsapp_automation_rules WHERE id = $1`, [id]);
+    if (!exists.rows[0]) return undefined;
+    await withTransaction(async (client) => {
+      await client.query(
+        `UPDATE whatsapp_automation_rules SET
+          name=$2, description=$3, status=$4, priority=$5, trigger_type=$6, trigger_config=$7,
+          target_audience=$8, custom_phone=$9, business_hours_only=$10, max_per_contact_per_day=$11, updated_at=NOW()
+         WHERE id = $1`,
+        [id, input.name, input.description, input.status, input.priority, input.triggerType, JSON.stringify(input.triggerConfig || {}), input.targetAudience, input.customPhone, input.businessHoursOnly, input.maxPerContactPerDay]
+      );
+      await client.query(`DELETE FROM whatsapp_automation_conditions WHERE rule_id = $1`, [id]);
+      await client.query(`DELETE FROM whatsapp_automation_steps WHERE rule_id = $1`, [id]);
+      await client.query(`DELETE FROM whatsapp_automation_stop_conditions WHERE rule_id = $1`, [id]);
+      await this.insertRuleChildrenTx(client, id, input);
+    });
+    return this.getWhatsappRuleDetail(id);
+  }
+
+  async updateWhatsappRuleStatus(id: string, status: "Active" | "Inactive"): Promise<WhatsappAutomationRule | undefined> {
+    await this.waitForReady();
+    const { rows } = await pool.query(`UPDATE whatsapp_automation_rules SET status=$2, updated_at=NOW() WHERE id=$1 RETURNING *`, [id, status]);
+    return rows[0] ? mapRule(rows[0]) : undefined;
+  }
+
+  async deleteWhatsappRule(id: string): Promise<boolean> {
+    await this.waitForReady();
+    const result = await pool.query(`DELETE FROM whatsapp_automation_rules WHERE id = $1`, [id]);
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  // ---- Automation runs ----
+  async getActiveWhatsappRun(ruleId: string, entityType: string, entityId: string, triggerEvent: string): Promise<WhatsappAutomationRun | undefined> {
+    await this.waitForReady();
+    const { rows } = await pool.query(
+      `SELECT * FROM whatsapp_automation_runs WHERE rule_id=$1 AND entity_type=$2 AND entity_id=$3 AND trigger_event=$4`,
+      [ruleId, entityType, entityId, triggerEvent]
+    );
+    return rows[0] ? mapRun(rows[0]) : undefined;
+  }
+
+  /** Idempotent: returns undefined (no-op) if a run for this rule+entity+trigger already exists. */
+  async createWhatsappRun(ruleId: string, entityType: string, entityId: string, triggerEvent: string): Promise<WhatsappAutomationRun | undefined> {
+    await this.waitForReady();
+    const { rows } = await pool.query(
+      `INSERT INTO whatsapp_automation_runs (id, rule_id, entity_type, entity_id, trigger_event)
+       VALUES ($1,$2,$3,$4,$5)
+       ON CONFLICT (rule_id, entity_type, entity_id, trigger_event) DO NOTHING
+       RETURNING *`,
+      [randomUUID(), ruleId, entityType, entityId, triggerEvent]
+    );
+    return rows[0] ? mapRun(rows[0]) : undefined;
+  }
+
+  async getWhatsappRun(id: string): Promise<WhatsappAutomationRun | undefined> {
+    await this.waitForReady();
+    const { rows } = await pool.query(`SELECT * FROM whatsapp_automation_runs WHERE id = $1`, [id]);
+    return rows[0] ? mapRun(rows[0]) : undefined;
+  }
+
+  async updateWhatsappRunProgress(id: string, currentStep: number): Promise<void> {
+    await this.waitForReady();
+    await pool.query(`UPDATE whatsapp_automation_runs SET current_step=$2, updated_at=NOW() WHERE id=$1`, [id, currentStep]);
+  }
+
+  async completeWhatsappRun(id: string): Promise<void> {
+    await this.waitForReady();
+    await pool.query(`UPDATE whatsapp_automation_runs SET status='completed', updated_at=NOW() WHERE id=$1 AND status='active'`, [id]);
+  }
+
+  async stopWhatsappRun(id: string, reason: string): Promise<void> {
+    await this.waitForReady();
+    await pool.query(`UPDATE whatsapp_automation_runs SET status='stopped', stop_reason=$2, updated_at=NOW() WHERE id=$1 AND status='active'`, [id, reason]);
+  }
+
+  async getActiveWhatsappRunsForEntity(entityType: string, entityId: string): Promise<WhatsappAutomationRun[]> {
+    await this.waitForReady();
+    const { rows } = await pool.query(
+      `SELECT * FROM whatsapp_automation_runs WHERE entity_type=$1 AND entity_id=$2 AND status='active'`,
+      [entityType, entityId]
+    );
+    return rows.map(mapRun);
+  }
+
+  async getWhatsappRuns(filters: { status?: string; ruleId?: string; limit?: number; offset?: number }): Promise<{ data: WhatsappAutomationRun[]; total: number }> {
+    await this.waitForReady();
+    const clauses: string[] = [];
+    const params: any[] = [];
+    if (filters.status) { params.push(filters.status); clauses.push(`r.status = $${params.length}`); }
+    if (filters.ruleId) { params.push(filters.ruleId); clauses.push(`r.rule_id = $${params.length}`); }
+    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+    const limit = filters.limit ?? 50;
+    const offset = filters.offset ?? 0;
+    const { rows } = await pool.query(
+      `SELECT r.*, ru.name as rule_name, COALESCE(l.name, p.name, ap_p.name) as entity_name
+       FROM whatsapp_automation_runs r
+       LEFT JOIN whatsapp_automation_rules ru ON ru.id = r.rule_id
+       LEFT JOIN leads l ON r.entity_type = 'lead' AND l.id::text = r.entity_id
+       LEFT JOIN patients p ON r.entity_type = 'patient' AND p.id::text = r.entity_id
+       LEFT JOIN appointments ap ON r.entity_type = 'appointment' AND ap.id::text = r.entity_id
+       LEFT JOIN patients ap_p ON ap.patient_id = ap_p.id
+       ${where}
+       ORDER BY r.started_at DESC
+       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]
+    );
+    const { rows: countRows } = await pool.query(`SELECT COUNT(*) as count FROM whatsapp_automation_runs r ${where}`, params);
+    return { data: rows.map(mapRun), total: Number(countRows[0]?.count || 0) };
+  }
+
+  // ---- Message jobs (queue + history combined) ----
+  async createWhatsappJob(input: {
+    runId: string; stepId: string; ruleId: string; entityType: string; entityId: string;
+    phone: string; templateId: string; messageType: string; variables: Record<string, string>;
+    renderedPreview: string; scheduledAt: Date; idempotencyKey: string; maxAttempts?: number;
+  }): Promise<WhatsappMessageJob | undefined> {
+    await this.waitForReady();
+    const { rows } = await pool.query(
+      `INSERT INTO whatsapp_message_jobs
+        (id, run_id, step_id, rule_id, entity_type, entity_id, phone, template_id, message_type, variables, rendered_preview, status, scheduled_at, max_attempts, idempotency_key)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'queued',$12,$13,$14)
+       ON CONFLICT (idempotency_key) DO NOTHING
+       RETURNING *`,
+      [randomUUID(), input.runId, input.stepId, input.ruleId, input.entityType, input.entityId, input.phone, input.templateId, input.messageType, JSON.stringify(input.variables), input.renderedPreview, input.scheduledAt.toISOString(), input.maxAttempts ?? 5, input.idempotencyKey]
+    );
+    return rows[0] ? mapJob(rows[0]) : undefined;
+  }
+
+  async getDueWhatsappJobs(limit = 25): Promise<WhatsappMessageJob[]> {
+    await this.waitForReady();
+    const { rows } = await pool.query(
+      `SELECT j.* FROM whatsapp_message_jobs j
+       LEFT JOIN whatsapp_automation_rules r ON r.id = j.rule_id
+       WHERE j.status = 'queued' AND j.scheduled_at <= NOW()
+       ORDER BY CASE r.priority WHEN 'High' THEN 0 WHEN 'Normal' THEN 1 ELSE 2 END ASC, j.scheduled_at ASC
+       LIMIT $1`,
+      [limit]
+    );
+    return rows.map(mapJob);
+  }
+
+  async getWhatsappJob(id: string): Promise<WhatsappMessageJob | undefined> {
+    await this.waitForReady();
+    const { rows } = await pool.query(`SELECT * FROM whatsapp_message_jobs WHERE id = $1`, [id]);
+    return rows[0] ? mapJob(rows[0]) : undefined;
+  }
+
+  async markWhatsappJobSending(id: string): Promise<void> {
+    await this.waitForReady();
+    await pool.query(`UPDATE whatsapp_message_jobs SET status='sending', attempts = attempts + 1 WHERE id=$1`, [id]);
+  }
+
+  async rescheduleWhatsappJob(id: string, scheduledAt: Date, status: "queued" | "pending" = "queued"): Promise<void> {
+    await this.waitForReady();
+    await pool.query(`UPDATE whatsapp_message_jobs SET scheduled_at=$2, status=$3 WHERE id=$1`, [id, scheduledAt.toISOString(), status]);
+  }
+
+  async markWhatsappJobResult(id: string, fields: {
+    status: MessageJobStatus; providerMessageId?: string; campaignId?: string; lastError?: string; sentAt?: Date;
+  }): Promise<void> {
+    await this.waitForReady();
+    await pool.query(
+      `UPDATE whatsapp_message_jobs SET status=$2, provider_message_id=COALESCE($3, provider_message_id), campaign_id=COALESCE($4, campaign_id), last_error=$5, sent_at=COALESCE($6, sent_at) WHERE id=$1`,
+      [id, fields.status, fields.providerMessageId || null, fields.campaignId || null, fields.lastError || null, fields.sentAt ? fields.sentAt.toISOString() : null]
+    );
+  }
+
+  async updateWhatsappJobStatusByProviderMessageId(providerMessageId: string, status: MessageJobStatus, timestampField: "delivered_at" | "read_at"): Promise<WhatsappMessageJob | undefined> {
+    await this.waitForReady();
+    const { rows } = await pool.query(
+      `UPDATE whatsapp_message_jobs SET status=$2, ${timestampField}=NOW() WHERE provider_message_id=$1 RETURNING *`,
+      [providerMessageId, status]
+    );
+    return rows[0] ? mapJob(rows[0]) : undefined;
+  }
+
+  async setWhatsappJobStatusByProviderMessageId(providerMessageId: string, status: MessageJobStatus, lastError?: string): Promise<WhatsappMessageJob | undefined> {
+    await this.waitForReady();
+    const { rows } = await pool.query(
+      `UPDATE whatsapp_message_jobs SET status=$2, last_error=COALESCE($3, last_error) WHERE provider_message_id=$1 RETURNING *`,
+      [providerMessageId, status, lastError || null]
+    );
+    return rows[0] ? mapJob(rows[0]) : undefined;
+  }
+
+  async countWhatsappMessagesToday(phone: string): Promise<number> {
+    await this.waitForReady();
+    const { rows } = await pool.query(
+      `SELECT COUNT(*) as count FROM whatsapp_message_jobs WHERE phone=$1 AND sent_at >= date_trunc('day', NOW()) AND status IN ('sent','delivered','read')`,
+      [phone]
+    );
+    return Number(rows[0]?.count || 0);
+  }
+
+  async getLastSentWhatsappMessage(phone: string): Promise<WhatsappMessageJob | undefined> {
+    await this.waitForReady();
+    const { rows } = await pool.query(
+      `SELECT * FROM whatsapp_message_jobs WHERE phone=$1 AND sent_at IS NOT NULL ORDER BY sent_at DESC LIMIT 1`,
+      [phone]
+    );
+    return rows[0] ? mapJob(rows[0]) : undefined;
+  }
+
+  async getWhatsappMessageJobs(filters: { status?: string; ruleId?: string; entityId?: string; limit?: number; offset?: number }): Promise<{ data: WhatsappMessageJob[]; total: number }> {
+    await this.waitForReady();
+    const clauses: string[] = [];
+    const params: any[] = [];
+    if (filters.status) { params.push(filters.status); clauses.push(`j.status = $${params.length}`); }
+    if (filters.ruleId) { params.push(filters.ruleId); clauses.push(`j.rule_id = $${params.length}`); }
+    if (filters.entityId) { params.push(filters.entityId); clauses.push(`j.entity_id = $${params.length}`); }
+    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+    const limit = filters.limit ?? 50;
+    const offset = filters.offset ?? 0;
+    const { rows } = await pool.query(
+      `SELECT j.*, r.name as rule_name, t.name as template_name, COALESCE(l.name, p.name, ap_p.name) as entity_name
+       FROM whatsapp_message_jobs j
+       LEFT JOIN whatsapp_automation_rules r ON r.id = j.rule_id
+       LEFT JOIN whatsapp_templates t ON t.template_id = j.template_id
+       LEFT JOIN leads l ON j.entity_type = 'lead' AND l.id::text = j.entity_id
+       LEFT JOIN patients p ON j.entity_type = 'patient' AND p.id::text = j.entity_id
+       LEFT JOIN appointments ap ON j.entity_type = 'appointment' AND ap.id::text = j.entity_id
+       LEFT JOIN patients ap_p ON ap.patient_id = ap_p.id
+       ${where}
+       ORDER BY j.scheduled_at DESC
+       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]
+    );
+    const { rows: countRows } = await pool.query(`SELECT COUNT(*) as count FROM whatsapp_message_jobs j ${where}`, params);
+    return { data: rows.map(mapJob), total: Number(countRows[0]?.count || 0) };
+  }
+
+  // ---- Conversation window state ----
+  async getConversationSession(phone: string): Promise<WhatsappConversationSession | undefined> {
+    await this.waitForReady();
+    const { rows } = await pool.query(`SELECT * FROM whatsapp_conversation_sessions WHERE phone=$1`, [phone]);
+    return rows[0] ? mapConversationSession(rows[0]) : undefined;
+  }
+
+  async recordOutboundMessage(phone: string): Promise<void> {
+    await this.waitForReady();
+    await pool.query(
+      `INSERT INTO whatsapp_conversation_sessions (phone, last_outbound_at, status)
+       VALUES ($1, NOW(), 'closed')
+       ON CONFLICT (phone) DO UPDATE SET last_outbound_at = NOW()`,
+      [phone]
+    );
+  }
+
+  async recordInboundMessage(phone: string): Promise<void> {
+    await this.waitForReady();
+    await pool.query(
+      `INSERT INTO whatsapp_conversation_sessions (phone, last_inbound_at, window_expires_at, status)
+       VALUES ($1, NOW(), NOW() + INTERVAL '24 hours', 'open')
+       ON CONFLICT (phone) DO UPDATE SET last_inbound_at = NOW(), window_expires_at = NOW() + INTERVAL '24 hours', status = 'open'`,
+      [phone]
+    );
+  }
+
+  async isConversationWindowOpen(phone: string): Promise<boolean> {
+    await this.waitForReady();
+    const { rows } = await pool.query(`SELECT 1 FROM whatsapp_conversation_sessions WHERE phone=$1 AND window_expires_at > NOW()`, [phone]);
+    return rows.length > 0;
+  }
+
+  // ---- Opt-outs ----
+  async isOptedOut(phone: string): Promise<boolean> {
+    await this.waitForReady();
+    const { rows } = await pool.query(`SELECT 1 FROM whatsapp_opt_outs WHERE phone=$1`, [phone]);
+    return rows.length > 0;
+  }
+
+  async addWhatsappOptOut(phone: string, source: string): Promise<void> {
+    await this.waitForReady();
+    await pool.query(`INSERT INTO whatsapp_opt_outs (phone, source) VALUES ($1,$2) ON CONFLICT (phone) DO NOTHING`, [phone, source]);
+  }
+
+  // ---- Audit log ----
+  async logWhatsappAudit(action: string, ruleId: string | undefined, userId: string, username: string, detail: Record<string, any>): Promise<void> {
+    await this.waitForReady();
+    await pool.query(
+      `INSERT INTO whatsapp_automation_audit_log (id, action, rule_id, user_id, username, detail) VALUES ($1,$2,$3,$4,$5,$6)`,
+      [randomUUID(), action, ruleId || null, userId, username, JSON.stringify(detail || {})]
+    );
+  }
+
+  async getWhatsappAuditLog(ruleId?: string, limit = 100): Promise<any[]> {
+    await this.waitForReady();
+    const { rows } = ruleId
+      ? await pool.query(`SELECT * FROM whatsapp_automation_audit_log WHERE rule_id=$1 ORDER BY created_at DESC LIMIT $2`, [ruleId, limit])
+      : await pool.query(`SELECT * FROM whatsapp_automation_audit_log ORDER BY created_at DESC LIMIT $1`, [limit]);
+    return rows.map((r) => ({
+      id: normalizeId(r.id),
+      action: r.action,
+      ruleId: r.rule_id ? normalizeId(r.rule_id) : undefined,
+      userId: r.user_id,
+      username: r.username,
+      detail: parseJsonColumn(r.detail, {}),
+      createdAt: r.created_at,
+    }));
+  }
+
+  // ---- Webhook events (raw safety net) ----
+  async storeWhatsappWebhookEvent(payload: any): Promise<string> {
+    await this.waitForReady();
+    const id = randomUUID();
+    await pool.query(`INSERT INTO whatsapp_webhook_events (id, payload) VALUES ($1,$2)`, [id, JSON.stringify(payload)]);
+    return id;
+  }
+
+  async markWhatsappWebhookProcessed(id: string, note: string): Promise<void> {
+    await this.waitForReady();
+    await pool.query(`UPDATE whatsapp_webhook_events SET processed=true, note=$2 WHERE id=$1`, [id, note]);
+  }
+
+  // ---- Dashboard ----
+  async getWhatsappDashboardStats(): Promise<WhatsappDashboardStats> {
+    await this.waitForReady();
+    const [activeRuleRes, todayRes, pendingRes, scheduledRes, repliesRes, perRuleRes] = await Promise.all([
+      pool.query(`SELECT COUNT(*) as count FROM whatsapp_automation_rules WHERE status='Active'`),
+      pool.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE sent_at >= date_trunc('day', NOW())) as sent,
+          COUNT(*) FILTER (WHERE delivered_at >= date_trunc('day', NOW())) as delivered,
+          COUNT(*) FILTER (WHERE read_at >= date_trunc('day', NOW())) as read,
+          COUNT(*) FILTER (WHERE status='failed' AND scheduled_at >= date_trunc('day', NOW())) as failed
+        FROM whatsapp_message_jobs
+      `),
+      pool.query(`SELECT COUNT(*) as count FROM whatsapp_message_jobs WHERE status IN ('pending','queued')`),
+      pool.query(`SELECT COUNT(*) as count FROM whatsapp_message_jobs WHERE status='queued' AND scheduled_at > NOW()`),
+      pool.query(`SELECT COUNT(*) as count FROM whatsapp_conversation_sessions WHERE last_inbound_at >= date_trunc('day', NOW())`),
+      pool.query(`
+        SELECT r.id, r.name, r.status,
+          COUNT(DISTINCT run.id) as triggered,
+          COUNT(j.id) FILTER (WHERE j.status IN ('sent','delivered','read')) as sent,
+          COUNT(j.id) FILTER (WHERE j.status IN ('delivered','read')) as delivered,
+          COUNT(j.id) FILTER (WHERE j.status='read') as read,
+          COUNT(j.id) FILTER (WHERE j.status='failed') as failed
+        FROM whatsapp_automation_rules r
+        LEFT JOIN whatsapp_automation_runs run ON run.rule_id = r.id
+        LEFT JOIN whatsapp_message_jobs j ON j.rule_id = r.id
+        GROUP BY r.id, r.name, r.status
+        ORDER BY r.created_at DESC
+      `),
+    ]);
+
+    return {
+      activeRules: Number(activeRuleRes.rows[0]?.count || 0),
+      sentToday: Number(todayRes.rows[0]?.sent || 0),
+      deliveredToday: Number(todayRes.rows[0]?.delivered || 0),
+      readToday: Number(todayRes.rows[0]?.read || 0),
+      failedToday: Number(todayRes.rows[0]?.failed || 0),
+      pending: Number(pendingRes.rows[0]?.count || 0),
+      scheduled: Number(scheduledRes.rows[0]?.count || 0),
+      repliesToday: Number(repliesRes.rows[0]?.count || 0),
+      perRule: perRuleRes.rows.map((r) => ({
+        ruleId: normalizeId(r.id),
+        ruleName: r.name,
+        status: r.status,
+        triggered: Number(r.triggered || 0),
+        sent: Number(r.sent || 0),
+        delivered: Number(r.delivered || 0),
+        read: Number(r.read || 0),
+        failed: Number(r.failed || 0),
+        replies: 0,
+      })),
+    };
   }
 }
 

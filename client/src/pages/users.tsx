@@ -76,6 +76,7 @@ const modulesList = [
   { id: "medicines", label: "Medicine Master" },
   { id: "treatments", label: "Treatment Master" },
   { id: "crm", label: "CRM (Leads & Follow-ups)" },
+  { id: "whatsappAutomation", label: "WhatsApp Automation" },
   { id: "reports", label: "Reports & Analytics" },
 ];
 
