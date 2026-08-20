@@ -96,7 +96,7 @@ function Router() {
       <ProtectedRoute path="/crm/whatsapp/rules" component={WhatsappRules} requiredModule="whatsappAutomation" />
       <ProtectedRoute path="/crm/whatsapp/rules/new" component={WhatsappRuleBuilder} requiredModule="whatsappAutomation" />
       <ProtectedRoute path="/crm/whatsapp/rules/:id/edit" component={WhatsappRuleBuilder} requiredModule="whatsappAutomation" />
-      {/* <ProtectedRoute path="/crm/whatsapp/templates" component={WhatsappTemplates} requiredModule="whatsappAutomation" /> */}
+      <ProtectedRoute path="/crm/whatsapp/templates" component={WhatsappTemplates} requiredModule="whatsappAutomation" />
       <ProtectedRoute path="/crm/whatsapp/history" component={WhatsappHistory} requiredModule="whatsappAutomation" />
       <ProtectedRoute path="/crm/whatsapp/settings" component={WhatsappSettings} requiredModule="whatsappAutomation" />
       <ProtectedRoute path="/users" component={UsersPage} requireSuperAdmin />

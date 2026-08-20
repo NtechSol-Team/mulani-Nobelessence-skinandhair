@@ -535,6 +535,7 @@ export const TEMPLATE_VARIABLE_SOURCES: Record<WhatsappEntityType | "clinic", { 
 
 export const STOP_CONDITION_TYPES = [
   "lead_replied",
+  "lead_status_changed",
   "lead_converted",
   "lead_lost",
   "appointment_booked",
@@ -545,6 +546,7 @@ export type StopConditionType = typeof STOP_CONDITION_TYPES[number];
 
 export const STOP_CONDITION_LABELS: Record<StopConditionType, string> = {
   lead_replied: "Lead Replies on WhatsApp",
+  lead_status_changed: "Lead Status Changes at All (New/Hot/Warm/Cold/Converted/Lost)",
   lead_converted: "Lead Converts to Patient",
   lead_lost: "Lead Marked Lost",
   appointment_booked: "Appointment Gets Booked",

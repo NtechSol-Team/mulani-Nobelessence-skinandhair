@@ -239,6 +239,11 @@ async function checkStopCondition(type: StopConditionType, run: WhatsappAutomati
       const appts = await storage.getAppointmentsByPatient(patientId);
       return appts.length > 0;
     }
+    case "lead_status_changed":
+      // Any-status-change detection is event-driven only (see stopMatchingRunsForEvent
+      // below) - by the time this proactive check runs there's no baseline status left
+      // to compare against, only the current one.
+      return false;
     case "manually_stopped":
       // Set directly via the "stop run" API action, not detected here.
       return false;
@@ -370,8 +375,14 @@ async function stopMatchingRunsForEvent(payload: AutomationEventPayload): Promis
     }
   } else if (payload.trigger === "lead_status_changed" && payload.entityType === "lead") {
     const lead = await storage.getLead(payload.entityId);
-    if (lead?.status === "Converted") targets.push({ entityType: "lead", entityId: lead.id, stopType: "lead_converted" });
-    if (lead?.status === "Lost") targets.push({ entityType: "lead", entityId: lead.id, stopType: "lead_lost" });
+    if (lead) {
+      // Generic: any change at all halts sequences that opted into it (e.g. a
+      // "new lead nurture" drip that should stop the moment staff moves the
+      // lead off "New", regardless of which status it moves to).
+      targets.push({ entityType: "lead", entityId: lead.id, stopType: "lead_status_changed" });
+      if (lead.status === "Converted") targets.push({ entityType: "lead", entityId: lead.id, stopType: "lead_converted" });
+      if (lead.status === "Lost") targets.push({ entityType: "lead", entityId: lead.id, stopType: "lead_lost" });
+    }
   }
 
   for (const target of targets) {

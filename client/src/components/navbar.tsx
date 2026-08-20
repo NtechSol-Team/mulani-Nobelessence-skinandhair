@@ -87,7 +87,7 @@ const navItems: NavItem[] = [
     children: [
       { path: "/crm/whatsapp", label: "Automation Dashboard", icon: LayoutDashboard, module: "whatsappAutomation" },
       { path: "/crm/whatsapp/rules", label: "Automation Rules", icon: Zap, module: "whatsappAutomation" },
-      // { path: "/crm/whatsapp/templates", label: "Templates", icon: FileText, module: "whatsappAutomation" },
+      { path: "/crm/whatsapp/templates", label: "Templates", icon: FileText, module: "whatsappAutomation" },
       { path: "/crm/whatsapp/history", label: "Execution History", icon: History, module: "whatsappAutomation" },
       { path: "/crm/whatsapp/settings", label: "WhatsApp Settings", icon: Settings2, module: "whatsappAutomation" },
     ]
