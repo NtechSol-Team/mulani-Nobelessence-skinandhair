@@ -58,6 +58,11 @@ const pool = new Pool({
   ssl: {
     rejectUnauthorized: false,
   },
+  // This cluster is a shared managed Postgres with a low max_connections.
+  // Keep the pool small and let idle clients be reclaimed quickly.
+  max: parseInt(process.env.PG_POOL_MAX || "8", 10),
+  idleTimeoutMillis: parseInt(process.env.PG_POOL_IDLE_MS || "10000", 10),
+  connectionTimeoutMillis: 10000,
 });
 
 export interface IStorage {
