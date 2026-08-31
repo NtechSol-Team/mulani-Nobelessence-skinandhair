@@ -6,7 +6,6 @@ import { serveStatic } from "./static";
 import { createServer } from "http";
 import helmet from "helmet";
 import { setupAuth } from "./auth";
-import { setupCronJob } from "./cron";
 import { registerAutomationEngine } from "./whatsapp/engine";
 import { startWhatsappScheduler } from "./whatsapp/scheduler";
 
@@ -132,7 +131,6 @@ app.use((req, res, next) => {
     const port = parseInt(process.env.PORT || "5050", 10);
     httpServer.listen(port, "0.0.0.0", () => {
       log(`serving on port ${port}`);
-      setupCronJob();
       registerAutomationEngine();
       startWhatsappScheduler();
     });
