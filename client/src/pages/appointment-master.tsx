@@ -17,9 +17,11 @@ import {
     MessageCircle,
     UserX,
     RefreshCw,
-    Phone
+    Phone,
+    ChevronDown
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -139,6 +141,8 @@ export default function AppointmentMaster() {
     const [deletingAppointment, setDeletingAppointment] = useState<Appointment | null>(null);
     // Set while the dialog is re-booking a patient who did not come; the source is marked "Rescheduled" once the new one is saved.
     const [reappointSource, setReappointSource] = useState<Appointment | null>(null);
+    // The Not Come section starts collapsed; the header still shows the count and a "Follow-up Needed" badge.
+    const [isNotComeOpen, setIsNotComeOpen] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
 
     const { data: appointmentsResponse, isLoading } = useQuery({
@@ -655,21 +659,32 @@ Primecare Skin & Health`;
             </Card>
 
             {/* Not Come / Pending Re-appointment - patients who missed their appointment */}
+            <Collapsible open={isNotComeOpen} onOpenChange={setIsNotComeOpen}>
             <Card className="border-l-4 border-l-orange-500 shadow-md">
-                <CardHeader className="pb-3 bg-orange-50/50">
-                    <CardTitle className="text-lg font-medium flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                            <UserX className="w-5 h-5 text-orange-600" />
-                            Not Come / Pending Re-appointment ({missedAppointments.length})
-                        </div>
-                        <Badge variant={missedAppointments.length > 0 ? "destructive" : "secondary"}>
-                            {missedAppointments.length > 0 ? "Follow-up Needed" : "All Clear"}
-                        </Badge>
-                    </CardTitle>
-                    <p className="text-xs text-muted-foreground">
-                        Patients who did not come. Call or message them, then re-appoint so they are not lost.
-                    </p>
+                <CardHeader className="p-0 bg-orange-50/50">
+                    <CollapsibleTrigger className="group w-full text-left px-6 py-4 flex items-center justify-between gap-3 hover:bg-orange-50 transition-colors rounded-tr-lg">
+                        <span className="flex flex-col gap-1">
+                            <span className="text-lg font-medium flex items-center gap-2">
+                                <UserX className="w-5 h-5 text-orange-600" />
+                                Not Come / Pending Re-appointment ({missedAppointments.length})
+                            </span>
+                            <span className="text-xs text-muted-foreground">
+                                Patients who did not come. Call or message them, then re-appoint so they are not lost.
+                            </span>
+                        </span>
+                        <span className="flex items-center gap-3 shrink-0">
+                            <Badge variant={missedAppointments.length > 0 ? "destructive" : "secondary"}>
+                                {missedAppointments.length > 0 ? "Follow-up Needed" : "All Clear"}
+                            </Badge>
+                            <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                                <span className="group-data-[state=open]:hidden">Show</span>
+                                <span className="hidden group-data-[state=open]:inline">Hide</span>
+                                <ChevronDown className="w-4 h-4 transition-transform group-data-[state=open]:rotate-180" />
+                            </span>
+                        </span>
+                    </CollapsibleTrigger>
                 </CardHeader>
+                <CollapsibleContent>
                 <CardContent className="pt-4">
                     {missedAppointments.length === 0 ? (
                         <div className="text-center py-4 text-muted-foreground">
@@ -769,7 +784,9 @@ Primecare Skin & Health`;
                         </div>
                     )}
                 </CardContent>
+                </CollapsibleContent>
             </Card>
+            </Collapsible>
 
             <Card>
                 <CardHeader className="pb-4">
