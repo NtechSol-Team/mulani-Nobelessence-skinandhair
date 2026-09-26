@@ -10,11 +10,11 @@ export type DiscountType = "Percentage" | "INR";
 
 /**
  * How the final payable amount is rounded to a whole rupee.
+ *   "down"    -> 111.67 => 111, 111.90 => 111   (paise are waived)  <- current clinic rule
  *   "nearest" -> 111.67 => 112, 111.40 => 111   (standard round-off)
  *   "up"      -> 111.67 => 112, 111.10 => 112
- *   "down"    -> 111.67 => 111, 111.90 => 111   (paise are waived)
  */
-export const FINAL_AMOUNT_ROUNDING: "nearest" | "up" | "down" = "nearest";
+export const FINAL_AMOUNT_ROUNDING: "nearest" | "up" | "down" = "down";
 
 /** Round to 2 decimals (paise), tolerant of binary float noise like 1972.3800000000001. */
 export function roundMoney(n: number): number {
