@@ -46,6 +46,7 @@ import {
   type WhatsappEntityType,
 } from "@shared/schema";
 import { calcPending } from "@shared/money";
+import { retryWithBackoff } from "./retry";
 import { randomUUID } from "crypto";
 import { Pool, type PoolClient } from "pg";
 
@@ -761,25 +762,23 @@ class DataCache {
 type EntityTable = "patients" | "visits" | "medicines" | "treatments" | "bills" | "expenses" | "appointments" | "payment_ledger" | "leads" | "crm_interactions" | "crm_tasks" | "departments" | "users";
 type IdMode = "numeric" | "text";
 
-async function getColumnDataType(table: string, column: string): Promise<string | undefined> {
-  const { rows } = await pool.query<{ data_type: string }>(
-    `SELECT data_type
-     FROM information_schema.columns
-     WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2`,
-    [table, column],
-  );
-  return rows[0]?.data_type;
-}
-
 async function detectIdModes(): Promise<Record<EntityTable, IdMode>> {
   const tables: EntityTable[] = ["patients", "visits", "medicines", "treatments", "bills", "expenses", "appointments", "payment_ledger", "leads", "crm_interactions", "crm_tasks", "departments", "users"];
-  const entries = await Promise.all(
-    tables.map(async (table) => {
-      const dataType = await getColumnDataType(table, "id");
-      const mode: IdMode = dataType === "bigint" || dataType === "integer" ? "numeric" : "text";
-      return [table, mode] as const;
-    }),
+  // A single query on a single connection. This used to fire one query per table via Promise.all,
+  // which made boot open several connections at once - and on the shared managed cluster (low
+  // max_connections) that is enough to be refused a slot.
+  const { rows } = await pool.query<{ table_name: string; data_type: string }>(
+    `SELECT table_name, data_type
+     FROM information_schema.columns
+     WHERE table_schema = 'public' AND column_name = 'id' AND table_name = ANY($1::text[])`,
+    [tables],
   );
+  const dataTypes = new Map(rows.map((r) => [r.table_name, r.data_type]));
+  const entries = tables.map((table) => {
+    const dataType = dataTypes.get(table);
+    const mode: IdMode = dataType === "bigint" || dataType === "integer" ? "numeric" : "text";
+    return [table, mode] as const;
+  });
   return Object.fromEntries(entries) as Record<EntityTable, IdMode>;
 }
 
@@ -1123,10 +1122,16 @@ export class PostgresStorage implements IStorage {
   private cache = new DataCache(5_000);
 
   constructor() {
-    this.ready = (async () => {
-      await ensureTables();
-      this.idModes = await detectIdModes();
-    })();
+    this.ready = retryWithBackoff(
+      async () => {
+        await ensureTables();
+        this.idModes = await detectIdModes();
+      },
+      {
+        onRetry: (err, attempt, delayMs) =>
+          console.error(`DB start-up failed (attempt ${attempt}), retrying in ${delayMs}ms: ${err instanceof Error ? err.message : String(err)}`),
+      },
+    );
   }
 
   private async waitForReady() {
