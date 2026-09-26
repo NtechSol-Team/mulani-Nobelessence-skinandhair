@@ -150,7 +150,11 @@ export interface BillMedicineItem {
 export interface BillTreatmentItem {
   treatmentId: string;
   treatmentName: string;
-  price: number;
+  price: number; // gross (pre-discount) price
+  discountType?: "Percentage" | "INR"; // how discountValue is interpreted
+  discountValue?: number; // what the user typed: a % or a rupee amount
+  discount?: number; // calculated discount in rupees
+  total?: number; // net after discount; absent on bills saved before per-treatment discounts
   equipments?: TreatmentEquipmentItem[];
 }
 
@@ -179,6 +183,10 @@ export const insertBillSchema = z.object({
     treatmentId: z.string(),
     treatmentName: z.string(),
     price: z.number(),
+    discountType: z.enum(["Percentage", "INR"]).optional().default("Percentage"),
+    discountValue: z.number().min(0).optional().default(0),
+    discount: z.number().min(0).optional().default(0),
+    total: z.number().optional(),
     equipments: z.array(z.object({
       medicineId: z.string(),
       quantity: z.number().min(1),
@@ -277,17 +285,22 @@ export interface Appointment {
   date: string;
   time: string; // Time string like "14:30"
   reason: string;
-  status: string; // "Scheduled", "Completed", "Cancelled"
+  // "No Show" = patient did not come (shown as "Not Come"); "Rescheduled" = a
+  // missed appointment that has since been re-booked as a new appointment.
+  status: string; // "Scheduled", "Completed", "Cancelled", "No Show", "Rescheduled"
   isUpcoming: boolean; // Computed or stored
   type?: "New" | "Follow-up";
 }
+
+export const APPOINTMENT_STATUSES = ["Scheduled", "Completed", "Cancelled", "No Show", "Rescheduled"] as const;
+export type AppointmentStatus = (typeof APPOINTMENT_STATUSES)[number];
 
 export const insertAppointmentSchema = z.object({
   patientId: z.string().min(1, "Patient ID is required"),
   date: z.string(),
   time: z.string().default("09:00"),
   reason: z.string().optional().default(""),
-  status: z.enum(["Scheduled", "Completed", "Cancelled"]).default("Scheduled"),
+  status: z.enum(APPOINTMENT_STATUSES).default("Scheduled"),
   type: z.enum(["New", "Follow-up"]).default("New"),
 });
 
@@ -477,7 +490,7 @@ export const CONDITION_FIELDS: Record<WhatsappEntityType, ConditionFieldDefiniti
     { key: "dob", label: "Date of Birth", type: "date" },
   ],
   appointment: [
-    { key: "status", label: "Appointment Status", type: "enum", options: ["Scheduled", "Completed", "Cancelled"] },
+    { key: "status", label: "Appointment Status", type: "enum", options: [...APPOINTMENT_STATUSES] },
     { key: "type", label: "Appointment Type", type: "enum", options: ["New", "Follow-up"] },
     { key: "date", label: "Appointment Date", type: "date" },
     { key: "reason", label: "Reason", type: "text" },

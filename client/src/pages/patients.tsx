@@ -13,6 +13,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { insertAppointmentSchema, type Patient, type Bill, type Visit, type Appointment, type Department } from "@shared/schema";
+import { isPending } from "@shared/money";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { format, startOfMonth, endOfMonth, isWithinInterval, subMonths } from "date-fns";
@@ -433,7 +434,7 @@ export default function PatientsPage() {
                     <tbody className="divide-y">
                       {paginatedPatients.map((patient) => {
                         const patientBills = bills.filter((b) => b.patientId === patient.id);
-                        const hasPending = patientBills.some((b) => b.pendingAmount > 0);
+                        const hasPending = patientBills.some((b) => isPending(b));
 
                         const patientVisits = visits.filter((v) => v.patientId === patient.id);
                         const lastVisit = patientVisits.length > 0
@@ -519,7 +520,7 @@ export default function PatientsPage() {
                 <div className="space-y-2">
                   {paginatedPatients.map((patient) => {
                     const patientBills = bills.filter((b) => b.patientId === patient.id);
-                    const hasPending = patientBills.some((b) => b.pendingAmount > 0);
+                    const hasPending = patientBills.some((b) => isPending(b));
 
                     const patientVisits = visits.filter((v) => v.patientId === patient.id);
                     const lastVisit = patientVisits.length > 0

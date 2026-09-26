@@ -19,6 +19,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { insertAppointmentSchema } from "@shared/schema";
+import { formatMoney, isPending, roundMoney, treatmentNet } from "@shared/money";
 import { useToast } from "@/hooks/use-toast";
 import { z } from "zod";
 
@@ -105,7 +106,7 @@ export default function Dashboard() {
   });
   const departments = Array.isArray(departmentsResponse) ? (departmentsResponse as Department[]) : [];
 
-  const pendingBills = bills.filter((bill) => bill.pendingAmount > 0);
+  const pendingBills = bills.filter((bill) => isPending(bill));
 
   // Get selected date string
   // (Using the selectedDate state from above)
@@ -124,7 +125,7 @@ export default function Dashboard() {
 
   // Selected date's bills calculations
   const todayBills = bills.filter((bill) => bill.date === selectedDate);
-  const todayPendingAmount = todayBills.reduce((sum, bill) => sum + bill.pendingAmount, 0);
+  const todayPendingAmount = roundMoney(todayBills.reduce((sum, bill) => sum + (isPending(bill) ? bill.pendingAmount : 0), 0));
 
   // Selected date's payments (from ledger)
   const todayPayments = paymentLedgers.filter((payment) => payment.date === selectedDate);
@@ -134,7 +135,7 @@ export default function Dashboard() {
   const todayAppointments = appointments.filter(a => a.date === selectedDate);
 
   // Total pending amount from all bills
-  const totalPendingAmount = pendingBills.reduce((sum, bill) => sum + bill.pendingAmount, 0);
+  const totalPendingAmount = roundMoney(pendingBills.reduce((sum, bill) => sum + bill.pendingAmount, 0));
 
   // This month's statistics
   const currentMonthStart = startOfMonth(new Date());
@@ -409,10 +410,10 @@ export default function Dashboard() {
                       </div>
                       <div className="text-right">
                         <p className="font-semibold text-destructive text-sm">
-                          ₹{bill.pendingAmount.toLocaleString()}
+                          ₹{formatMoney(bill.pendingAmount)}
                         </p>
                         <p className="text-xs text-muted-foreground">
-                          of ₹{bill.finalAmount.toLocaleString()}
+                          of ₹{formatMoney(bill.finalAmount)}
                         </p>
                       </div>
                     </div>
@@ -470,7 +471,7 @@ export default function Dashboard() {
                 const patientTodayPayments = todayPayments.filter((p) => p.patientId === patient.id);
                 const todayPaid = patientTodayPayments.reduce((sum, p) => sum + p.amount, 0);
                 
-                const todayPending = patientTodayBills.reduce((sum, b) => sum + b.pendingAmount, 0);
+                const todayPending = roundMoney(patientTodayBills.reduce((sum, b) => sum + (isPending(b) ? b.pendingAmount : 0), 0));
 
                 return (
                   <div
@@ -678,7 +679,12 @@ export default function Dashboard() {
                     {selectedBillForDetails.treatments.map((t, i) => (
                       <div key={i} className="flex justify-between text-sm py-1 border-b last:border-b-0">
                         <span>{t.treatmentName}</span>
-                        <span className="font-medium">₹{t.price.toLocaleString()}</span>
+                        <span className="font-medium">
+                          ₹{treatmentNet(t).toLocaleString()}
+                          {(t.discount || 0) > 0 && (
+                            <span className="ml-1 text-xs text-green-600">(-₹{formatMoney(t.discount || 0)})</span>
+                          )}
+                        </span>
                       </div>
                     ))}
                   </div>
@@ -712,7 +718,7 @@ export default function Dashboard() {
                 </div>
                 <div className="flex justify-between text-sm text-destructive border-t pt-2">
                   <span className="font-semibold">Pending Amount:</span>
-                  <span className="font-bold">₹{selectedBillForDetails.pendingAmount.toLocaleString()}</span>
+                  <span className="font-bold">₹{formatMoney(isPending(selectedBillForDetails) ? selectedBillForDetails.pendingAmount : 0)}</span>
                 </div>
               </div>
 

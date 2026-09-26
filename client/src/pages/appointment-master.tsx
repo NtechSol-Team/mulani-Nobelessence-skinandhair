@@ -14,7 +14,10 @@ import {
     CheckCircle2,
     XCircle,
     AlertCircle,
-    MessageCircle
+    MessageCircle,
+    UserX,
+    RefreshCw,
+    Phone
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -65,9 +68,9 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import type { Appointment, Patient } from "@shared/schema";
 import { extractPaginatedData } from "@/lib/utils";
-import { insertAppointmentSchema } from "@shared/schema";
+import { insertAppointmentSchema, APPOINTMENT_STATUSES, type AppointmentStatus } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
-import { format } from "date-fns";
+import { format, addDays, parseISO, differenceInCalendarDays } from "date-fns";
 import { z } from "zod";
 
 const appointmentFormSchema = z.object({
@@ -78,7 +81,7 @@ const appointmentFormSchema = z.object({
     date: z.string(),
     time: z.string().default("09:00"),
     reason: z.string().optional().default(""),
-    status: z.enum(["Scheduled", "Completed", "Cancelled"]).default("Scheduled"),
+    status: z.enum(APPOINTMENT_STATUSES).default("Scheduled"),
     type: z.enum(["New", "Follow-up"]).default("New"),
 }).superRefine((data, ctx) => {
     if (data.isNewPatient) {
@@ -109,6 +112,22 @@ const appointmentFormSchema = z.object({
 
 type AppointmentForm = z.infer<typeof appointmentFormSchema>;
 
+// Convert 24h "16:00" to "4:00 PM"; falls back to the raw value if it can't be parsed.
+function formatTime12h(time: string): string {
+    const [hours, minutes] = (time || "").split(":");
+    const hour = parseInt(hours, 10);
+    if (Number.isNaN(hour) || minutes === undefined) return time;
+    return `${hour % 12 || 12}:${minutes} ${hour >= 12 ? "PM" : "AM"}`;
+}
+
+function openWhatsAppChat(rawPhone: string, message: string) {
+    let phone = rawPhone.replace(/\D/g, "");
+    if (phone.length === 10) {
+        phone = "91" + phone;
+    }
+    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(message)}`, "_blank");
+}
+
 export default function AppointmentMaster() {
     const { toast } = useToast();
     const queryClient = useQueryClient();
@@ -118,6 +137,8 @@ export default function AppointmentMaster() {
     const [isDialogOpen, setIsDialogOpen] = useState(false);
     const [editingAppointment, setEditingAppointment] = useState<Appointment | null>(null);
     const [deletingAppointment, setDeletingAppointment] = useState<Appointment | null>(null);
+    // Set while the dialog is re-booking a patient who did not come; the source is marked "Rescheduled" once the new one is saved.
+    const [reappointSource, setReappointSource] = useState<Appointment | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
 
     const { data: appointmentsResponse, isLoading } = useQuery({
@@ -152,7 +173,10 @@ export default function AppointmentMaster() {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
-            toast({
+            toast(reappointSource ? {
+                title: "Patient Re-appointed",
+                description: `${reappointSource.patientName || "Patient"} has a new appointment. The missed one is marked as Rescheduled.`,
+            } : {
                 title: "Appointment Scheduled",
                 description: "New appointment has been successfully created.",
             });
@@ -188,6 +212,39 @@ export default function AppointmentMaster() {
         },
     });
 
+    // Quick status change from a card/row (Not Come, Came, Rescheduled) without opening the edit dialog.
+    const statusMutation = useMutation({
+        mutationFn: async ({ appt, status }: { appt: Appointment; status: AppointmentStatus; silent?: boolean }) => {
+            return await apiRequest("PATCH", `/api/appointments/${appt.id}`, {
+                patientId: appt.patientId,
+                date: appt.date,
+                time: appt.time,
+                reason: appt.reason,
+                status,
+                type: appt.type || "New",
+            });
+        },
+        onSuccess: (_data, { appt, status, silent }) => {
+            queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
+            if (silent) return;
+            const name = appt.patientName || "Patient";
+            toast(
+                status === "No Show"
+                    ? { title: "Marked as Not Come", description: `${name} moved to the Not Come list. Re-appoint from there.` }
+                    : status === "Completed"
+                        ? { title: "Marked as Completed", description: `${name}'s appointment is completed.` }
+                        : { title: "Appointment Updated", description: "Status has been updated." },
+            );
+        },
+        onError: (error: Error) => {
+            toast({
+                title: "Failed to Update",
+                description: error.message,
+                variant: "destructive",
+            });
+        },
+    });
+
     const deleteMutation = useMutation({
         mutationFn: async (id: string) => {
             return await apiRequest("DELETE", `/api/appointments/${id}`);
@@ -212,6 +269,7 @@ export default function AppointmentMaster() {
     const closeDialog = () => {
         setIsDialogOpen(false);
         setEditingAppointment(null);
+        setReappointSource(null);
         form.reset({
             isNewPatient: false,
             patientId: "",
@@ -235,7 +293,25 @@ export default function AppointmentMaster() {
             date: appointment.date,
             time: appointment.time,
             reason: appointment.reason,
-            status: appointment.status as "Scheduled" | "Completed" | "Cancelled",
+            status: appointment.status as AppointmentStatus,
+            type: appointment.type || "New",
+        });
+        setIsDialogOpen(true);
+    };
+
+    // Re-book a patient who did not come: new appointment (default tomorrow), same patient/time/reason.
+    const openReappointDialog = (appointment: Appointment) => {
+        setEditingAppointment(null);
+        setReappointSource(appointment);
+        form.reset({
+            isNewPatient: false,
+            patientId: appointment.patientId,
+            newPatientName: "",
+            newPatientPhone: "",
+            date: format(addDays(new Date(), 1), "yyyy-MM-dd"),
+            time: appointment.time,
+            reason: appointment.reason,
+            status: "Scheduled",
             type: appointment.type || "New",
         });
         setIsDialogOpen(true);
@@ -244,6 +320,7 @@ export default function AppointmentMaster() {
     const onSubmit = async (data: AppointmentForm) => {
         try {
             setIsSubmitting(true);
+            const source = reappointSource; // closeDialog() clears it when the create succeeds
             let patientIdToUse = data.patientId;
 
             if (data.isNewPatient && !editingAppointment) {
@@ -275,7 +352,11 @@ export default function AppointmentMaster() {
             if (editingAppointment) {
                 await updateMutation.mutateAsync({ id: editingAppointment.id, data: appointmentData }).catch(() => {});
             } else {
-                await createMutation.mutateAsync(appointmentData).catch(() => {});
+                const created = await createMutation.mutateAsync(appointmentData).then(() => true).catch(() => false);
+                if (created && source) {
+                    // Only after the new appointment exists, so a failed save never loses the missed one.
+                    await statusMutation.mutateAsync({ appt: source, status: "Rescheduled", silent: true }).catch(() => {});
+                }
             }
         } catch (error: any) {
             toast({
@@ -311,11 +392,32 @@ export default function AppointmentMaster() {
         return matchesSearch && matchesDate;
     });
 
-    const todaysAppointments = appointments.filter(a => a.date === format(new Date(), "yyyy-MM-dd"));
+    const todayStr = format(new Date(), "yyyy-MM-dd");
+
+    // A patient who did not come. Staff mark this explicitly (Today's card, or a past row in the list) -
+    // we don't guess from the date, because most past appointments are simply never ticked as completed.
+    // These leave the normal lists and are tracked in the Not Come section instead.
+    const isMissed = (a: Appointment) => a.status === "No Show";
+
+    const todaysAppointments = appointments.filter(
+        a => a.date === todayStr && a.status !== "No Show" && a.status !== "Rescheduled"
+    );
+
+    const missedAppointments = appointments
+        .filter(isMissed)
+        .sort((a, b) => b.date.localeCompare(a.date) || b.time.localeCompare(a.time));
+
+    // How often each patient has missed an appointment (Not Come + ones already re-booked), for tracking repeat no-shows.
+    const missCountByPatient = appointments.reduce((acc: Record<string, number>, a) => {
+        if (a.status === "No Show" || a.status === "Rescheduled") {
+            acc[a.patientId] = (acc[a.patientId] || 0) + 1;
+        }
+        return acc;
+    }, {});
 
     // Split and sort appointments chronologically / reverse-chronologically
     const upcomingAppointments = filteredAppointments
-        .filter(a => a.isUpcoming)
+        .filter(a => a.isUpcoming && !isMissed(a) && a.status !== "Rescheduled")
         .sort((a, b) => {
             const dateDiff = new Date(a.date).getTime() - new Date(b.date).getTime();
             if (dateDiff !== 0) return dateDiff;
@@ -323,7 +425,7 @@ export default function AppointmentMaster() {
         });
 
     const pastAppointments = filteredAppointments
-        .filter(a => !a.isUpcoming)
+        .filter(a => !isMissed(a) && (!a.isUpcoming || a.status === "Rescheduled"))
         .sort((a, b) => {
             const dateDiff = new Date(b.date).getTime() - new Date(a.date).getTime();
             if (dateDiff !== 0) return dateDiff;
@@ -369,18 +471,7 @@ export default function AppointmentMaster() {
         // Format: Your appointment has been confirmed for 23 December 2025 at 04:00 PM at Primecare Skin & Health. Please arrive 10 minutes early. We look forward to seeing you!
         const dateStr = format(new Date(appt.date), "d MMMM yyyy");
 
-        // Convert 24h time to 12h AM/PM
-        let timeStr = appt.time;
-        try {
-            const [hours, minutes] = appt.time.split(':');
-            const hour = parseInt(hours, 10);
-            const ampm = hour >= 12 ? 'PM' : 'AM';
-            const hour12 = hour % 12 || 12;
-            timeStr = `${hour12}:${minutes} ${ampm}`;
-        } catch (e) {
-            // fallback if time is invalid
-            console.error("Time parsing error", e);
-        }
+        const timeStr = formatTime12h(appt.time);
 
         const message = `Hello ${patient.name},
 
@@ -389,14 +480,30 @@ Please arrive 10 minutes early. We look forward to seeing you!
 
 Warm regards,
 Primecare Skin & Health`;
-        const encodedMessage = encodeURIComponent(message);
-        let phone = patient.phone.replace(/\D/g, '');
-        if (phone.length === 10) {
-            phone = '91' + phone;
-        }
-        const whatsappUrl = `https://wa.me/${phone}?text=${encodedMessage}`;
+        openWhatsAppChat(patient.phone, message);
+    };
 
-        window.open(whatsappUrl, '_blank');
+    // "We missed you" follow-up for a patient who did not come.
+    const sendMissedWhatsApp = (appt: Appointment) => {
+        const patient = patients.find(p => p.id === appt.patientId);
+        if (!patient) {
+            toast({
+                title: "Error",
+                description: "Patient details not found",
+                variant: "destructive"
+            });
+            return;
+        }
+
+        const dateStr = format(new Date(appt.date), "d MMMM yyyy");
+        const message = `Hello ${patient.name},
+
+We missed you at your appointment on ${dateStr} at ${formatTime12h(appt.time)} at Primecare Skin & Health.
+Would you like to reschedule? Please reply with a date and time that suits you and we will book it for you.
+
+Warm regards,
+Primecare Skin & Health`;
+        openWhatsAppChat(patient.phone, message);
     };
 
     const getStatusBadge = (status: string) => {
@@ -407,6 +514,10 @@ Primecare Skin & Health`;
                 return <Badge className="bg-green-100 text-green-800 hover:bg-green-200">Completed</Badge>;
             case "Cancelled":
                 return <Badge className="bg-red-100 text-red-800 hover:bg-red-200">Cancelled</Badge>;
+            case "No Show":
+                return <Badge className="bg-orange-100 text-orange-800 hover:bg-orange-200">Not Come</Badge>;
+            case "Rescheduled":
+                return <Badge className="bg-purple-100 text-purple-800 hover:bg-purple-200">Rescheduled</Badge>;
             default:
                 return <Badge variant="outline">{status}</Badge>;
         }
@@ -501,8 +612,21 @@ Primecare Skin & Health`;
                                         </div>
                                     )}
 
-                                    {/* Action Buttons: Reschedule & Edit */}
+                                    {/* Action Buttons: Not Come, Reschedule & Edit */}
                                     <div className="flex gap-2 justify-end pt-1 border-t border-border/40">
+                                        {appt.status === "Scheduled" && (
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                className="h-7 text-xs px-2 flex items-center gap-1 text-orange-700 hover:bg-orange-50 hover:text-orange-700 hover:border-orange-200"
+                                                disabled={statusMutation.isPending}
+                                                title="Patient did not come - move to the Not Come list"
+                                                onClick={() => statusMutation.mutate({ appt, status: "No Show" })}
+                                            >
+                                                <UserX className="w-3 h-3" />
+                                                Not Come
+                                            </Button>
+                                        )}
                                         {appt.status !== "Completed" && (
                                             <Button
                                                 variant="outline"
@@ -525,6 +649,123 @@ Primecare Skin & Health`;
                                     </div>
                                 </div>
                             ))}
+                        </div>
+                    )}
+                </CardContent>
+            </Card>
+
+            {/* Not Come / Pending Re-appointment - patients who missed their appointment */}
+            <Card className="border-l-4 border-l-orange-500 shadow-md">
+                <CardHeader className="pb-3 bg-orange-50/50">
+                    <CardTitle className="text-lg font-medium flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                            <UserX className="w-5 h-5 text-orange-600" />
+                            Not Come / Pending Re-appointment ({missedAppointments.length})
+                        </div>
+                        <Badge variant={missedAppointments.length > 0 ? "destructive" : "secondary"}>
+                            {missedAppointments.length > 0 ? "Follow-up Needed" : "All Clear"}
+                        </Badge>
+                    </CardTitle>
+                    <p className="text-xs text-muted-foreground">
+                        Patients who did not come. Call or message them, then re-appoint so they are not lost.
+                    </p>
+                </CardHeader>
+                <CardContent className="pt-4">
+                    {missedAppointments.length === 0 ? (
+                        <div className="text-center py-4 text-muted-foreground">
+                            No missed appointments. Patients you mark as "Not Come" appear here, ready to re-appoint.
+                        </div>
+                    ) : (
+                        <div className="border rounded-lg overflow-hidden max-h-[28rem] overflow-y-auto">
+                            <Table>
+                                <TableHeader>
+                                    <TableRow>
+                                        <TableHead>Patient</TableHead>
+                                        <TableHead>Missed Appointment</TableHead>
+                                        <TableHead>Reason</TableHead>
+                                        <TableHead>Status</TableHead>
+                                        <TableHead className="text-right">Actions</TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    {missedAppointments.map((appt) => {
+                                        const patient = patients.find(p => p.id === appt.patientId);
+                                        const daysAgo = differenceInCalendarDays(new Date(), parseISO(appt.date));
+                                        const missCount = missCountByPatient[appt.patientId] || 0;
+                                        return (
+                                            <TableRow key={appt.id}>
+                                                <TableCell>
+                                                    <div className="flex flex-col gap-0.5">
+                                                        <div className="flex items-center gap-2 flex-wrap">
+                                                            <span className="font-medium">{appt.patientName || patient?.name || "Unknown Patient"}</span>
+                                                            {missCount >= 2 && (
+                                                                <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-5 bg-red-50 text-red-700 border-red-200 hover:bg-red-50">
+                                                                    Missed x{missCount}
+                                                                </Badge>
+                                                            )}
+                                                        </div>
+                                                        {patient?.phone && (
+                                                            <span className="text-xs text-muted-foreground flex items-center gap-1">
+                                                                <Phone className="w-3 h-3" />
+                                                                {patient.phone}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                </TableCell>
+                                                <TableCell>
+                                                    <div className="flex flex-col">
+                                                        <span>{format(parseISO(appt.date), "dd MMM yyyy")} - {appt.time}</span>
+                                                        <span className="text-xs text-muted-foreground">
+                                                            {daysAgo <= 0 ? "Today" : daysAgo === 1 ? "Yesterday" : `${daysAgo} days ago`}
+                                                        </span>
+                                                    </div>
+                                                </TableCell>
+                                                <TableCell>{appt.reason}</TableCell>
+                                                <TableCell>{getStatusBadge(appt.status)}</TableCell>
+                                                <TableCell className="text-right">
+                                                    <div className="flex justify-end gap-1">
+                                                        <Button
+                                                            size="sm"
+                                                            className="h-8 text-xs flex items-center gap-1"
+                                                            onClick={() => openReappointDialog(appt)}
+                                                        >
+                                                            <RefreshCw className="w-3 h-3" />
+                                                            Re-appoint
+                                                        </Button>
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="icon"
+                                                            className="text-green-600 hover:text-green-700 hover:bg-green-50"
+                                                            title="Send 'we missed you' WhatsApp message"
+                                                            onClick={() => sendMissedWhatsApp(appt)}
+                                                        >
+                                                            <MessageCircle className="w-4 h-4" />
+                                                        </Button>
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="icon"
+                                                            className="text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                                                            title="Patient actually came - mark as completed"
+                                                            disabled={statusMutation.isPending}
+                                                            onClick={() => statusMutation.mutate({ appt, status: "Completed" })}
+                                                        >
+                                                            <CheckCircle2 className="w-4 h-4" />
+                                                        </Button>
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="icon"
+                                                            title="Edit appointment"
+                                                            onClick={() => openEditDialog(appt)}
+                                                        >
+                                                            <Edit2 className="w-4 h-4" />
+                                                        </Button>
+                                                    </div>
+                                                </TableCell>
+                                            </TableRow>
+                                        );
+                                    })}
+                                </TableBody>
+                            </Table>
                         </div>
                     )}
                 </CardContent>
@@ -617,14 +858,14 @@ Primecare Skin & Health`;
                                 <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-md">
                                     <DialogHeader>
                                         <DialogTitle>
-                                            {editingAppointment ? "Edit Appointment" : "Schedule New Appointment"}
+                                            {editingAppointment ? "Edit Appointment" : reappointSource ? "Re-appoint Patient" : "Schedule New Appointment"}
                                         </DialogTitle>
                                     </DialogHeader>
                                     <Form {...form}>
                                         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
 
                                             {/* Patient Type toggle */}
-                                            {!editingAppointment && (
+                                            {!editingAppointment && !reappointSource && (
                                                 <div className="flex items-center gap-6 p-3 bg-muted/40 border border-border/60 rounded-md mb-2">
                                                     <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Patient type:</label>
                                                     <div className="flex items-center gap-4">
@@ -666,7 +907,7 @@ Primecare Skin & Health`;
                                                             <Select
                                                                 onValueChange={field.onChange}
                                                                 value={field.value}
-                                                                disabled={!!editingAppointment} // Disable changing patient on edit
+                                                                disabled={!!editingAppointment || !!reappointSource} // Patient is fixed on edit / re-appoint
                                                             >
                                                                 <FormControl>
                                                                     <SelectTrigger>
@@ -787,6 +1028,10 @@ Primecare Skin & Health`;
                                                                 <SelectItem value="Scheduled">Scheduled</SelectItem>
                                                                 <SelectItem value="Completed">Completed</SelectItem>
                                                                 <SelectItem value="Cancelled">Cancelled</SelectItem>
+                                                                <SelectItem value="No Show">Not Come</SelectItem>
+                                                                {field.value === "Rescheduled" && (
+                                                                    <SelectItem value="Rescheduled">Rescheduled</SelectItem>
+                                                                )}
                                                             </SelectContent>
                                                         </Select>
                                                         <FormMessage />
@@ -879,6 +1124,7 @@ Primecare Skin & Health`;
                                                     onEdit={openEditDialog}
                                                     onDelete={setDeletingAppointment}
                                                     onWhatsApp={sendWhatsApp}
+                                                    onNotCome={(appt: Appointment) => statusMutation.mutate({ appt, status: "No Show" })}
                                                 />
                                             </div>
                                         ))}
@@ -900,6 +1146,7 @@ Primecare Skin & Health`;
                                         onEdit={openEditDialog}
                                         onDelete={setDeletingAppointment}
                                         onWhatsApp={sendWhatsApp}
+                                        onNotCome={(appt: Appointment) => statusMutation.mutate({ appt, status: "No Show" })}
                                     />
                                 )}
                             </TabsContent>
@@ -931,7 +1178,8 @@ Primecare Skin & Health`;
     );
 }
 
-function AppointmentsTable({ appointments, patients, getStatusBadge, onEdit, onDelete, onWhatsApp }: any) {
+function AppointmentsTable({ appointments, patients, getStatusBadge, onEdit, onDelete, onWhatsApp, onNotCome }: any) {
+    const todayStr = format(new Date(), "yyyy-MM-dd");
     return (
         <div className="border rounded-lg overflow-hidden">
             <Table>
@@ -980,6 +1228,17 @@ function AppointmentsTable({ appointments, patients, getStatusBadge, onEdit, onD
                                     >
                                         <MessageCircle className="w-4 h-4" />
                                     </Button>
+                                    {onNotCome && appt.status === "Scheduled" && appt.date <= todayStr && (
+                                        <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            className="text-orange-600 hover:text-orange-700 hover:bg-orange-50"
+                                            title="Patient did not come - move to the Not Come list"
+                                            onClick={() => onNotCome(appt)}
+                                        >
+                                            <UserX className="w-4 h-4" />
+                                        </Button>
+                                    )}
                                     <Button
                                         variant="ghost"
                                         size="icon"

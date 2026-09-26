@@ -55,6 +55,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import type { Patient, Visit, Bill, CRMInteraction, Department, Medicine } from "@shared/schema";
 import { insertVisitSchema, insertPatientSchema } from "@shared/schema";
+import { billBreakdown, formatMoney, isPending } from "@shared/money";
 import { apiRequest } from "@/lib/queryClient";
 import { extractPaginatedData } from "@/lib/utils";
 import { format } from "date-fns";
@@ -1198,8 +1199,8 @@ export default function PatientDetails() {
                       <span className="font-medium">
                         {format(new Date(bill.date), "dd MMM yyyy")}
                       </span>
-                      <Badge variant={bill.pendingAmount > 0 ? "destructive" : "outline"} className={bill.pendingAmount === 0 ? "text-green-600 border-green-200 bg-green-50" : ""}>
-                        {bill.pendingAmount > 0 ? "Pending" : "Paid"}
+                      <Badge variant={isPending(bill) ? "destructive" : "outline"} className={!isPending(bill) ? "text-green-600 border-green-200 bg-green-50" : ""}>
+                        {isPending(bill) ? "Pending" : "Paid"}
                       </Badge>
                     </div>
                     <div className="text-sm text-muted-foreground">
@@ -1208,16 +1209,16 @@ export default function PatientDetails() {
                   </div>
                   <div className="text-right">
                     <div className="font-bold text-lg">
-                      ₹{bill.finalAmount.toFixed(2)}
+                      ₹{formatMoney(bill.finalAmount)}
                     </div>
-                    {bill.discount > 0 && (
+                    {billBreakdown(bill).billDiscountAmount > 0 && (
                       <div className="text-xs text-muted-foreground line-through">
-                        ₹{bill.grandTotal.toFixed(2)}
+                        ₹{formatMoney(bill.grandTotal)}
                       </div>
                     )}
-                    {bill.pendingAmount > 0 && (
+                    {isPending(bill) && (
                       <div className="text-sm text-destructive font-medium">
-                        Due: ₹{bill.pendingAmount.toFixed(2)}
+                        Due: ₹{formatMoney(bill.pendingAmount)}
                       </div>
                     )}
                   </div>

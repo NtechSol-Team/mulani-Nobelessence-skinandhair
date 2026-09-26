@@ -55,6 +55,8 @@ import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { extractPaginatedData } from "@/lib/utils";
 import { format, startOfMonth, endOfMonth, isWithinInterval, subMonths } from "date-fns";
+import { billBreakdown, calcBillTotals, calcPending, formatMoney, isPending, roundMoney, treatmentNet } from "@shared/money";
+import { TreatmentLineEditor, withTreatmentLine } from "@/components/treatment-line-editor";
 
 export default function BillingManage() {
   const { toast } = useToast();
@@ -144,29 +146,28 @@ export default function BillingManage() {
       discountType: "Percentage" | "INR";
       date: string;
     }) => {
-      const treatmentTotal = treatments.reduce((sum, t) => sum + t.price, 0);
-      const medicineTotal = medicines.reduce((sum, m) => sum + m.total, 0);
-      const grandTotal = treatmentTotal + medicineTotal;
-
       if (!billToEdit) throw new Error("Bill not found");
 
-      const billDiscountAmount = discountType === "Percentage"
-        ? (grandTotal * discount) / 100
-        : discount;
-      const finalAmount = Math.max(0, grandTotal - billDiscountAmount);
+      const totals = calcBillTotals({
+        treatments,
+        medicines,
+        discount,
+        discountType,
+        amountPaid: billToEdit.amountPaid,
+      });
 
       return await apiRequest("PATCH", `/api/bills/${billId}`, {
         patientId: billToEdit.patientId,
         date,
         treatments,
         medicines,
-        treatmentTotal,
-        medicineTotal,
-        grandTotal,
+        treatmentTotal: totals.treatmentTotal,
+        medicineTotal: totals.medicineTotal,
+        grandTotal: totals.grandTotal,
         discount,
         discountType,
-        finalAmount,
-        amountPaid: Math.min(billToEdit.amountPaid, finalAmount),
+        finalAmount: totals.finalAmount,
+        amountPaid: Math.min(totals.amountPaid, totals.finalAmount),
         paymentMode: editingPaymentMode,
       });
     },
@@ -220,7 +221,7 @@ export default function BillingManage() {
 
   const openEditBillDialog = (bill: Bill) => {
     setBillToEdit(bill);
-    setEditingTreatments([...bill.treatments]);
+    setEditingTreatments(bill.treatments.map((t) => withTreatmentLine(t)));
     setEditingMedicines(bill.medicines.map(m => ({
       ...m,
       discountPercent: m.discountPercent || 0,
@@ -239,19 +240,19 @@ export default function BillingManage() {
     if (treatment) {
       setEditingTreatments([
         ...editingTreatments,
-        {
+        withTreatmentLine({
           treatmentId: treatment.id,
           treatmentName: treatment.name,
           price: treatment.defaultPrice,
-        },
+          discountType: "Percentage",
+          discountValue: 0,
+        }),
       ]);
     }
   };
 
-  const updateEditingTreatmentPrice = (index: number, price: number) => {
-    const updated = [...editingTreatments];
-    updated[index].price = price;
-    setEditingTreatments(updated);
+  const updateEditingTreatment = (index: number, next: BillTreatmentItem) => {
+    setEditingTreatments(editingTreatments.map((t, i) => (i === index ? next : t)));
   };
 
   const removeEditingTreatment = (index: number) => {
@@ -357,7 +358,7 @@ export default function BillingManage() {
 
   // Separate pending and recent bills
   const pendingBills = dateFilteredBills
-    .filter((b) => b.pendingAmount > 0)
+    .filter((b) => isPending(b))
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
     .filter((bill) =>
       bill.patientName.toLowerCase().includes(pendingBillSearch.toLowerCase().trim())
@@ -430,7 +431,7 @@ export default function BillingManage() {
         </div>
         <div class="bill-info-col">
           <p><strong>Invoice Type:</strong> Medical Bill</p>
-          <p><strong>Status:</strong> ${bill.pendingAmount > 0 ? "PENDING" : "SETTLED"}</p>
+          <p><strong>Status:</strong> ${isPending(bill) ? "PENDING" : "SETTLED"}</p>
         </div>
         </div>
 
@@ -455,9 +456,13 @@ export default function BillingManage() {
           <tr>
             <td>${t.treatmentName}</td>
             <td>Treatment</td>
-            <td class="text-right">₹${t.price.toFixed(2)}</td>
-            <td class="text-right">-</td>
-            <td class="text-right">₹${t.price.toFixed(2)}</td>
+            <td class="text-right">₹${formatMoney(t.price)}</td>
+            <td class="text-right">
+              ${(t.discount || 0) > 0
+        ? `${t.discountType === "Percentage" && t.discountValue ? t.discountValue + '% ' : ''}(₹${formatMoney(t.discount || 0)})`
+        : '-'}
+            </td>
+            <td class="text-right">₹${formatMoney(treatmentNet(t))}</td>
           </tr>
           `).join("")}
           ${bill.medicines.map(m => `
@@ -479,45 +484,51 @@ export default function BillingManage() {
         <div class="totals">
         <div class="total-row">
           <span>Treatment Total:</span>
-          <span>₹${bill.treatmentTotal.toFixed(2)}</span>
+          <span>₹${formatMoney(bill.treatmentTotal)}</span>
         </div>
         <div class="total-row">
           <span>Medicine Total:</span>
-          <span>₹${bill.medicines.reduce((sum, m) => sum + m.total, 0).toFixed(2)}</span>
+          <span>₹${formatMoney(bill.medicines.reduce((sum, m) => sum + m.total, 0))}</span>
         </div>
         <div class="total-row">
           <span>Gross Amount:</span>
-          <span>₹${bill.grandTotal.toFixed(2)}</span>
+          <span>₹${formatMoney(bill.grandTotal)}</span>
         </div>
-        ${(bill.grandTotal - bill.finalAmount) > 0.01 ? `
+        ${billBreakdown(bill).billDiscountAmount > 0 ? `
         <div class="total-row">
           <span>Bill Discount ${bill.discountType === "Percentage" ? `(${bill.discount}%)` : "(Flat)"}:</span>
-          <span>-₹${(bill.grandTotal - bill.finalAmount).toFixed(2)}</span>
+          <span>-₹${formatMoney(billBreakdown(bill).billDiscountAmount)}</span>
+        </div>
+        ` : ""}
+        ${Math.abs(billBreakdown(bill).roundOff) >= 0.01 ? `
+        <div class="total-row">
+          <span>Round Off:</span>
+          <span>${billBreakdown(bill).roundOff > 0 ? "+" : "-"}₹${formatMoney(Math.abs(billBreakdown(bill).roundOff))}</span>
         </div>
         ` : ""}
         <div class="total-row grand">
           <span>FINAL AMOUNT:</span>
-          <span>₹${bill.finalAmount.toFixed(2)}</span>
+          <span>₹${formatMoney(bill.finalAmount)}</span>
         </div>
         <div class="total-row paid">
           <span>Amount Paid:</span>
-          <span>₹${bill.amountPaid.toFixed(2)}</span>
+          <span>₹${formatMoney(bill.amountPaid)}</span>
         </div>
-        ${bill.pendingAmount > 0 ? `
+        ${isPending(bill) ? `
           <div class="total-row pending">
           <span>AMOUNT PENDING:</span>
-          <span>₹${bill.pendingAmount.toFixed(2)}</span>
+          <span>₹${formatMoney(bill.pendingAmount)}</span>
           </div>
         ` : ""}
         </div>
 
-        ${bill.pendingAmount === 0 ? `
+        ${!isPending(bill) ? `
         <div class="status-box status-settled">
           ✓ BILL FULLY SETTLED - Thank you for your payment
         </div>
         ` : `
         <div class="status-box status-pending">
-          ⚠ PAYMENT PENDING - Amount Due: ₹${bill.pendingAmount.toFixed(2)}
+          ⚠ PAYMENT PENDING - Amount Due: ₹${formatMoney(bill.pendingAmount)}
         </div>
         `}
 
@@ -570,8 +581,8 @@ export default function BillingManage() {
             Bill Date: {format(new Date(bill.date), "dd MMM yyyy")}
           </p>
         </div>
-        <Badge variant={bill.pendingAmount > 0 ? "destructive" : "default"}>
-          {bill.pendingAmount > 0 ? "Pending" : "Settled"}
+        <Badge variant={isPending(bill) ? "destructive" : "default"}>
+          {isPending(bill) ? "Pending" : "Settled"}
         </Badge>
       </div>
 
@@ -589,33 +600,39 @@ export default function BillingManage() {
       </div>
 
       <div className="bg-muted/50 p-3 rounded space-y-2">
-        {bill.grandTotal - bill.finalAmount > 0.01 && (
+        {(billBreakdown(bill).billDiscountAmount > 0 || Math.abs(billBreakdown(bill).roundOff) >= 0.01) && (
           <div className="flex justify-between text-sm text-muted-foreground">
             <span>Subtotal:</span>
-            <span>₹{bill.grandTotal.toFixed(2)}</span>
+            <span>₹{formatMoney(bill.grandTotal)}</span>
           </div>
         )}
-        {bill.grandTotal - bill.finalAmount > 0.01 && (
+        {billBreakdown(bill).billDiscountAmount > 0 && (
           <div className="flex justify-between text-sm text-muted-foreground">
             <span>Discount {bill.discountType === "Percentage" ? `(${bill.discount}%)` : "(Flat)"}:</span>
-            <span>-₹{(bill.grandTotal - bill.finalAmount).toFixed(2)}</span>
+            <span>-₹{formatMoney(billBreakdown(bill).billDiscountAmount)}</span>
+          </div>
+        )}
+        {Math.abs(billBreakdown(bill).roundOff) >= 0.01 && (
+          <div className="flex justify-between text-sm text-muted-foreground">
+            <span>Round Off:</span>
+            <span>{billBreakdown(bill).roundOff > 0 ? "+" : "-"}₹{formatMoney(Math.abs(billBreakdown(bill).roundOff))}</span>
           </div>
         )}
         <div className="flex justify-between text-sm font-semibold border-b pb-2">
           <span>Final Amount:</span>
-          <span>₹{bill.finalAmount.toFixed(2)}</span>
+          <span>₹{formatMoney(bill.finalAmount)}</span>
         </div>
         <div className="flex justify-between text-sm">
           <span>Amount Paid (All Visits):</span>
-          <span className="font-medium text-green-600">₹{bill.amountPaid.toFixed(2)}</span>
+          <span className="font-medium text-green-600">₹{formatMoney(bill.amountPaid)}</span>
         </div>
         <div className="flex justify-between text-sm">
           <span>Still Pending:</span>
-          <span className={`font-medium ${bill.pendingAmount > 0 ? 'text-destructive' : 'text-green-600'}`}>
-            ₹{bill.pendingAmount.toFixed(2)}
+          <span className={`font-medium ${isPending(bill) ? 'text-destructive' : 'text-green-600'}`}>
+            ₹{formatMoney(isPending(bill) ? bill.pendingAmount : 0)}
           </span>
         </div>
-        {bill.pendingAmount === 0 && (
+        {!isPending(bill) && (
           <div className="text-xs text-center text-green-600 font-semibold mt-2 pt-2 border-t">
             ✓ Bill Settled
           </div>
@@ -632,7 +649,7 @@ export default function BillingManage() {
           <Printer className="w-4 h-4 mr-1" />
           Print Bill
         </Button>
-        {bill.pendingAmount > 0 && (
+        {isPending(bill) && (
           <Button
             size="sm"
             variant="outline"
@@ -832,15 +849,15 @@ export default function BillingManage() {
                 <div className="text-xs font-semibold text-muted-foreground mb-2">BILL SUMMARY</div>
                 <div className="flex justify-between">
                   <span>Final Amount:</span>
-                  <span className="font-medium">₹{selectedBillForPayment.finalAmount.toFixed(2)}</span>
+                  <span className="font-medium">₹{formatMoney(selectedBillForPayment.finalAmount)}</span>
                 </div>
                 <div className="flex justify-between text-green-600">
                   <span>Already Paid:</span>
-                  <span className="font-medium">₹{selectedBillForPayment.amountPaid.toFixed(2)}</span>
+                  <span className="font-medium">₹{formatMoney(selectedBillForPayment.amountPaid)}</span>
                 </div>
                 <div className="flex justify-between text-destructive border-t pt-2 font-semibold">
                   <span>Still Pending:</span>
-                  <span>₹{selectedBillForPayment.pendingAmount.toFixed(2)}</span>
+                  <span>₹{formatMoney(selectedBillForPayment.pendingAmount)}</span>
                 </div>
               </div>
 
@@ -880,10 +897,21 @@ export default function BillingManage() {
                   </>
                 ) : (
                   <>
-                    <label className="text-sm font-medium mb-2 block">
-                      Add Amount
-                      <span className="text-xs text-muted-foreground ml-2">(this payment)</span>
-                    </label>
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="text-sm font-medium">
+                        Add Amount
+                        <span className="text-xs text-muted-foreground ml-2">(this payment)</span>
+                      </label>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-auto px-1 py-0.5 text-xs text-primary underline underline-offset-2 hover:bg-transparent"
+                        onClick={() => setPaymentDialogAmount(String(roundMoney(selectedBillForPayment.pendingAmount)))}
+                      >
+                        Pay full ₹{formatMoney(selectedBillForPayment.pendingAmount)}
+                      </Button>
+                    </div>
                     <Input
                       type="number"
                       min="0"
@@ -920,12 +948,12 @@ export default function BillingManage() {
                     <>
                       <div className="flex justify-between">
                         <span>New Total Paid:</span>
-                        <span className="font-medium text-green-600">₹{(parseFloat(editedPaidAmount || '0')).toFixed(2)}</span>
+                        <span className="font-medium text-green-600">₹{formatMoney(parseFloat(editedPaidAmount || '0'))}</span>
                       </div>
                       <div className="flex justify-between">
                         <span>Remaining Pending:</span>
-                        <span className={`font-medium ${((selectedBillForPayment?.finalAmount || 0) - (parseFloat(editedPaidAmount || '0'))) > 0 ? 'text-destructive' : 'text-green-600'}`}>
-                          ₹{(((selectedBillForPayment?.finalAmount || 0) - (parseFloat(editedPaidAmount || '0')))).toFixed(2)}
+                        <span className={`font-medium ${calcPending(selectedBillForPayment?.finalAmount || 0, parseFloat(editedPaidAmount || '0')) > 0 ? 'text-destructive' : 'text-green-600'}`}>
+                          ₹{formatMoney(calcPending(selectedBillForPayment?.finalAmount || 0, parseFloat(editedPaidAmount || '0')))}
                         </span>
                       </div>
                     </>
@@ -933,12 +961,12 @@ export default function BillingManage() {
                     <>
                       <div className="flex justify-between">
                         <span>Total Paid:</span>
-                        <span className="font-medium text-green-600">₹{(selectedBillForPayment.amountPaid + parseFloat(paymentDialogAmount || '0')).toFixed(2)}</span>
+                        <span className="font-medium text-green-600">₹{formatMoney(selectedBillForPayment.amountPaid + parseFloat(paymentDialogAmount || '0'))}</span>
                       </div>
                       <div className="flex justify-between">
                         <span>Remaining Pending:</span>
-                        <span className={`font-medium ${(selectedBillForPayment.pendingAmount - parseFloat(paymentDialogAmount || '0')) > 0 ? 'text-destructive' : 'text-green-600'}`}>
-                          ₹{(selectedBillForPayment.pendingAmount - parseFloat(paymentDialogAmount || '0')).toFixed(2)}
+                        <span className={`font-medium ${calcPending(selectedBillForPayment.finalAmount, selectedBillForPayment.amountPaid + parseFloat(paymentDialogAmount || '0')) > 0 ? 'text-destructive' : 'text-green-600'}`}>
+                          ₹{formatMoney(calcPending(selectedBillForPayment.finalAmount, selectedBillForPayment.amountPaid + parseFloat(paymentDialogAmount || '0')))}
                         </span>
                       </div>
                     </>
@@ -957,10 +985,10 @@ export default function BillingManage() {
 
                     if (isEditingPaidAmount) {
                       const setAmount = parseFloat(editedPaidAmount) || 0;
-                      if (setAmount < 0 || setAmount > selectedBillForPayment.finalAmount) {
+                      if (setAmount < 0 || roundMoney(setAmount) > selectedBillForPayment.finalAmount) {
                         toast({
                           title: "Invalid Amount",
-                          description: `Please enter a value between 0 and ₹${selectedBillForPayment.finalAmount.toFixed(2)}`,
+                          description: `Please enter a value between 0 and ₹${formatMoney(selectedBillForPayment.finalAmount)}`,
                           variant: "destructive",
                         });
                         return;
@@ -980,10 +1008,10 @@ export default function BillingManage() {
                         });
                         return;
                       }
-                      if (addAmount > selectedBillForPayment.pendingAmount) {
+                      if (roundMoney(addAmount) > roundMoney(selectedBillForPayment.pendingAmount)) {
                         toast({
                           title: "Amount Exceeds Pending",
-                          description: `Only ₹${selectedBillForPayment.pendingAmount.toFixed(2)} pending on this bill`,
+                          description: `Only ₹${formatMoney(selectedBillForPayment.pendingAmount)} pending on this bill`,
                           variant: "destructive",
                         });
                         return;
@@ -1011,15 +1039,21 @@ export default function BillingManage() {
             <DialogTitle>Edit Bill</DialogTitle>
           </DialogHeader>
           {billToEdit ? (() => {
-            const editTreatmentTotal = editingTreatments.reduce((sum, t) => sum + t.price, 0);
-            const editMedicineTotal = editingMedicines.reduce((sum, m) => sum + m.total, 0);
+            const editTotals = calcBillTotals({
+              treatments: editingTreatments,
+              medicines: editingMedicines,
+              discount: parseFloat(editingDiscount) || 0,
+              discountType: editingDiscountType,
+              amountPaid: billToEdit.amountPaid,
+            });
+            const editTreatmentTotal = editTotals.treatmentTotal;
+            const editMedicineTotal = editTotals.medicineTotal;
             const editTotalMedicineDiscount = editingMedicines.reduce((sum, m) => sum + (m.discount || 0), 0);
-            const editGrossTotal = editTreatmentTotal + editMedicineTotal;
-            const editBillDiscountValue = parseFloat(editingDiscount) || 0;
-            const editBillDiscountAmount = editingDiscountType === "Percentage"
-              ? (editGrossTotal * editBillDiscountValue) / 100
-              : editBillDiscountValue;
-            const editFinalAmount = Math.max(0, editGrossTotal - editBillDiscountAmount);
+            const editTotalTreatmentDiscount = editingTreatments.reduce((sum, t) => sum + (t.discount || 0), 0);
+            const editGrossTotal = editTotals.grandTotal;
+            const editBillDiscountAmount = editTotals.billDiscountAmount;
+            const editRoundOff = editTotals.roundOff;
+            const editFinalAmount = editTotals.finalAmount;
 
             return (
             <div className="space-y-4">
@@ -1063,31 +1097,12 @@ export default function BillingManage() {
                 ) : (
                   <div className="space-y-2">
                     {editingTreatments.map((treatment, index) => (
-                      <div
+                      <TreatmentLineEditor
                         key={index}
-                        className="flex items-center justify-between p-2 bg-muted/30 rounded"
-                      >
-                        <span className="text-sm font-medium">{treatment.treatmentName}</span>
-                        <div className="flex items-center gap-2">
-                          <Input
-                            type="number"
-                            min="0"
-                            value={treatment.price}
-                            onChange={(e) =>
-                              updateEditingTreatmentPrice(index, parseFloat(e.target.value) || 0)
-                            }
-                            className="h-7 w-24 text-xs"
-                          />
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6 text-destructive"
-                            onClick={() => removeEditingTreatment(index)}
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </Button>
-                        </div>
-                      </div>
+                        item={treatment}
+                        onChange={(next) => updateEditingTreatment(index, next)}
+                        onRemove={() => removeEditingTreatment(index)}
+                      />
                     ))}
                   </div>
                 )}
@@ -1194,22 +1209,28 @@ export default function BillingManage() {
               {/* Bill Summary */}
               <div className="border-t pt-3 space-y-2 text-sm">
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Treatment Total</span>
-                  <span>₹{editTreatmentTotal.toFixed(2)}</span>
+                  <span className="text-muted-foreground">Treatment Total (Net)</span>
+                  <span>₹{formatMoney(editTreatmentTotal)}</span>
                 </div>
+                {editTotalTreatmentDiscount > 0 && (
+                  <div className="flex justify-between text-green-600">
+                    <span>Treatment Level Discount</span>
+                    <span>-₹{formatMoney(editTotalTreatmentDiscount)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Medicine Total (Net)</span>
-                  <span>₹{editMedicineTotal.toFixed(2)}</span>
+                  <span>₹{formatMoney(editMedicineTotal)}</span>
                 </div>
                 {editTotalMedicineDiscount > 0 && (
                   <div className="flex justify-between text-green-600">
                     <span>Medicine Level Discount</span>
-                    <span>-₹{editTotalMedicineDiscount.toFixed(2)}</span>
+                    <span>-₹{formatMoney(editTotalMedicineDiscount)}</span>
                   </div>
                 )}
                 <div className="flex justify-between font-semibold text-base border-t pt-2">
                   <span>Gross Total</span>
-                  <span>₹{editGrossTotal.toFixed(2)}</span>
+                  <span>₹{formatMoney(editGrossTotal)}</span>
                 </div>
 
                 {/* Bill Discount Picker */}
@@ -1243,7 +1264,14 @@ export default function BillingManage() {
                 {editBillDiscountAmount > 0 && (
                   <div className="flex justify-between text-sm text-green-600 font-medium">
                     <span>Applied Bill Discount {editingDiscountType === "Percentage" ? `(${editingDiscount}%)` : ""}</span>
-                    <span>-₹{editBillDiscountAmount.toFixed(2)}</span>
+                    <span>-₹{formatMoney(editBillDiscountAmount)}</span>
+                  </div>
+                )}
+
+                {editRoundOff !== 0 && (
+                  <div className="flex justify-between text-sm text-muted-foreground">
+                    <span>Round Off</span>
+                    <span>{editRoundOff > 0 ? "+" : "-"}₹{formatMoney(Math.abs(editRoundOff))}</span>
                   </div>
                 )}
 
@@ -1263,24 +1291,24 @@ export default function BillingManage() {
 
                 <div className="flex justify-between font-bold text-lg border-t pt-2 text-primary">
                   <span>Final Amount</span>
-                  <span>₹{editFinalAmount.toFixed(2)}</span>
+                  <span>₹{formatMoney(editFinalAmount)}</span>
                 </div>
 
                 {billToEdit.amountPaid > 0 && (
                   <div className="p-2 bg-muted/50 rounded-lg space-y-1 text-xs">
                     <div className="flex justify-between">
                       <span>Already Paid:</span>
-                      <span className="font-medium text-green-600">₹{Math.min(billToEdit.amountPaid, editFinalAmount).toFixed(2)}</span>
+                      <span className="font-medium text-green-600">₹{formatMoney(Math.min(billToEdit.amountPaid, editFinalAmount))}</span>
                     </div>
                     <div className="flex justify-between">
                       <span>Pending After Update:</span>
-                      <span className={`font-medium ${(editFinalAmount - Math.min(billToEdit.amountPaid, editFinalAmount)) > 0 ? 'text-destructive' : 'text-green-600'}`}>
-                        ₹{(editFinalAmount - Math.min(billToEdit.amountPaid, editFinalAmount)).toFixed(2)}
+                      <span className={`font-medium ${calcPending(editFinalAmount, billToEdit.amountPaid) > 0 ? 'text-destructive' : 'text-green-600'}`}>
+                        ₹{formatMoney(calcPending(editFinalAmount, billToEdit.amountPaid))}
                       </span>
                     </div>
                     {billToEdit.amountPaid > editFinalAmount && (
                       <p className="text-amber-600 text-[10px] mt-1">
-                        ⚠ Amount paid exceeds new final amount. Paid will be capped to ₹{editFinalAmount.toFixed(2)}
+                        ⚠ Amount paid exceeds new final amount. Paid will be capped to ₹{formatMoney(editFinalAmount)}
                       </p>
                     )}
                   </div>

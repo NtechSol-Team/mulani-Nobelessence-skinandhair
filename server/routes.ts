@@ -18,6 +18,7 @@ import {
   registerSchema,
 } from "@shared/schema";
 import { z } from "zod";
+import { calcBillTotals, calcPending, calcTreatmentLine, roundMoney } from "@shared/money";
 
 import { ensureAuthenticated, requireSuperAdmin, checkPermission } from "./auth";
 import { registerWhatsappWebhookRoute, registerWhatsappRoutes } from "./whatsapp/routes";
@@ -35,6 +36,19 @@ function getLocalDateString(): string {
   const month = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+}
+
+// Re-derive every money field from the line items so a saved bill always obeys the
+// rounding rules (whole-rupee final amount, paise-safe pending) whatever the client sent.
+function normalizeBillMoney(bill: z.infer<typeof insertBillSchema>): void {
+  bill.treatments = bill.treatments.map((t) => ({ ...t, ...calcTreatmentLine(t) }));
+  const totals = calcBillTotals(bill);
+  bill.treatmentTotal = totals.treatmentTotal;
+  bill.medicineTotal = totals.medicineTotal;
+  bill.grandTotal = totals.grandTotal;
+  bill.finalAmount = totals.finalAmount;
+  // A bill cannot be paid beyond what is payable.
+  bill.amountPaid = Math.min(totals.amountPaid, totals.finalAmount);
 }
 
 export async function registerRoutes(
@@ -408,6 +422,7 @@ export async function registerRoutes(
   app.post("/api/bills", checkPermission("billing", "add"), async (req, res) => {
     try {
       const validated = insertBillSchema.parse(req.body);
+      normalizeBillMoney(validated);
 
       // Get patient name
       const patient = await storage.getPatient(validated.patientId);
@@ -443,6 +458,7 @@ export async function registerRoutes(
   app.patch("/api/bills/:id", checkPermission("billing", "edit"), async (req, res) => {
     try {
       const validated = insertBillSchema.parse(req.body);
+      normalizeBillMoney(validated);
 
       // Get patient name
       const patient = await storage.getPatient(validated.patientId);
@@ -562,24 +578,27 @@ export async function registerRoutes(
       let newTotalPaid: number;
       let amountAdded = 0;
 
+      // Payable is the post-discount, rounded amount - not the pre-discount grand total.
+      const payable = currentBill.finalAmount;
+
       // If setAmount is provided, use it as the absolute paid total (allow correcting mistakes)
       if (typeof setAmount === "number") {
-        if (setAmount < 0 || setAmount > currentBill.grandTotal) {
-          return res.status(400).json({ error: "setAmount must be between 0 and bill total" });
+        newTotalPaid = roundMoney(setAmount);
+        if (newTotalPaid < 0 || newTotalPaid > payable) {
+          return res.status(400).json({ error: `Amount paid must be between 0 and the bill amount (₹${payable})` });
         }
-        newTotalPaid = setAmount;
-        amountAdded = setAmount - currentBill.amountPaid;
+        amountAdded = roundMoney(newTotalPaid - currentBill.amountPaid);
       } else {
         // Otherwise use additive flow (existing behavior)
-        const add = typeof addAmount === "number" ? addAmount : undefined;
+        const add = typeof addAmount === "number" ? roundMoney(addAmount) : undefined;
         if (typeof add === "undefined" || add < 0) {
           return res.status(400).json({ error: "Invalid payment amount" });
         }
-        newTotalPaid = currentBill.amountPaid + add;
+        newTotalPaid = roundMoney(currentBill.amountPaid + add);
         amountAdded = add;
-        if (newTotalPaid > currentBill.grandTotal) {
+        if (newTotalPaid > payable) {
           return res.status(400).json({
-            error: `Cannot exceed bill amount. Remaining: ₹${(currentBill.grandTotal - currentBill.amountPaid).toFixed(2)}`
+            error: `Cannot exceed bill amount. Remaining: ₹${calcPending(payable, currentBill.amountPaid).toFixed(2)}`
           });
         }
       }

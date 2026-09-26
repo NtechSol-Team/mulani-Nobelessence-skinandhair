@@ -45,6 +45,7 @@ import {
   type WhatsappDashboardStats,
   type WhatsappEntityType,
 } from "@shared/schema";
+import { calcPending } from "@shared/money";
 import { randomUUID } from "crypto";
 import { Pool, type PoolClient } from "pg";
 
@@ -551,6 +552,10 @@ async function ensureTables(): Promise<void> {
   for (const statement of createTableStatements) {
     await pool.query(statement);
   }
+  // Repair: bills that were paid in full but stayed "pending" because of float residue
+  // (e.g. payable 1972.384 vs paid 1972.38 left 0.004 pending). One paisa or less is not a real balance.
+  await pool.query("UPDATE bills SET pending_amount = 0 WHERE pending_amount > 0 AND pending_amount <= 0.01");
+
   // Migration for new time column
   await pool.query("ALTER TABLE appointments ADD COLUMN IF NOT EXISTS time TEXT DEFAULT ''");
 
@@ -1783,7 +1788,7 @@ export class PostgresStorage implements IStorage {
     await this.waitForReady();
     try {
       const patientIdValue = this.convertId("patients", insertBill.patientId);
-      const pendingAmount = Math.max(0, insertBill.finalAmount - insertBill.amountPaid);
+      const pendingAmount = calcPending(insertBill.finalAmount, insertBill.amountPaid);
       const useNumericId = this.usesNumericId("bills");
       const query = useNumericId
         ? `INSERT INTO bills(
@@ -1961,7 +1966,7 @@ export class PostgresStorage implements IStorage {
 
       // 2. Create Bill
       const patientIdValue = this.convertId("patients", insertBill.patientId);
-      const pendingAmount = Math.max(0, insertBill.finalAmount - insertBill.amountPaid);
+      const pendingAmount = calcPending(insertBill.finalAmount, insertBill.amountPaid);
       const useNumericId = this.usesNumericId("bills");
 
       const query = useNumericId
@@ -2065,7 +2070,7 @@ export class PostgresStorage implements IStorage {
   async updateBill(id: string, insertBill: InsertBill, patientName: string): Promise<Bill | undefined> {
     await this.waitForReady();
     const dbId = this.convertId("bills", id);
-    const pendingAmount = Math.max(0, insertBill.finalAmount - insertBill.amountPaid);
+    const pendingAmount = calcPending(insertBill.finalAmount, insertBill.amountPaid);
     const { rows } = await pool.query<DbBillRow>(
       `UPDATE bills
        SET patient_id = $2,
@@ -2129,8 +2134,8 @@ export class PostgresStorage implements IStorage {
     const dbId = this.convertId("bills", id);
     const { rows } = await pool.query<DbBillRow>(
       `UPDATE bills
-       SET amount_paid = $2,
-            pending_amount = GREATEST(0, final_amount - $2)
+       SET amount_paid = $2::double precision,
+            pending_amount = GREATEST(0, ROUND((final_amount - $2::double precision)::numeric, 2))::double precision
        WHERE id = $1
        RETURNING id, patient_id, patient_name, date, treatments, medicines,
             treatment_total, medicine_total, grand_total, discount, discount_type, final_amount, amount_paid, pending_amount`,

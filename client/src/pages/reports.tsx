@@ -46,6 +46,7 @@ import {
   Cell,
 } from "recharts";
 import type { Bill, Medicine, Expense, Patient } from "@shared/schema";
+import { billBreakdown, treatmentNet } from "@shared/money";
 import { extractPaginatedData } from "@/lib/utils";
 import {
   format,
@@ -144,13 +145,13 @@ export default function Reports() {
   const onlinePayments = thisMonthPayments.filter(p => p.paymentMode === "Online").reduce((sum, p) => sum + p.amount, 0);
   const thisMonthCashCollected = cashPayments + onlinePayments;
 
-  // Total discount = sum of (grandTotal - finalAmount) for all bills
+  // Total discount = bill-level discount + per-treatment discounts. Round-off is not a discount,
+  // so it is excluded (grandTotal - finalAmount would wrongly count it).
   const thisMonthDiscount = thisMonthBills.reduce(
-    (sum, b) => {
-      const grandTotal = typeof b.grandTotal === 'number' ? b.grandTotal : parseFloat(String(b.grandTotal)) || 0;
-      const finalAmount = typeof b.finalAmount === 'number' ? b.finalAmount : parseFloat(String(b.finalAmount)) || 0;
-      return sum + (grandTotal - finalAmount);
-    },
+    (sum, b) =>
+      sum +
+      billBreakdown(b).billDiscountAmount +
+      b.treatments.reduce((acc, t) => acc + (t.discount || 0), 0),
     0
   );
 
@@ -306,13 +307,13 @@ export default function Reports() {
       const existing = acc.find((t) => t.treatmentId === treatment.treatmentId);
       if (existing) {
         existing.count += 1;
-        existing.totalRevenue += treatment.price;
+        existing.totalRevenue += treatmentNet(treatment);
       } else {
         acc.push({
           treatmentId: treatment.treatmentId,
           treatmentName: treatment.treatmentName,
           count: 1,
-          totalRevenue: treatment.price,
+          totalRevenue: treatmentNet(treatment),
         });
       }
     });

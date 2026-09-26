@@ -35,6 +35,8 @@ import type {
 } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
 import { extractPaginatedData } from "@/lib/utils";
+import { calcBillTotals, calcPending, formatMoney } from "@shared/money";
+import { TreatmentLineEditor, withTreatmentLine } from "@/components/treatment-line-editor";
 import { format } from "date-fns";
 
 export default function BillingCreate() {
@@ -104,28 +106,27 @@ export default function BillingCreate() {
     mutationFn: async () => {
       if (!selectedPatient) throw new Error("Please select a patient");
 
-      const treatmentTotal = selectedTreatments.reduce((sum, t) => sum + t.price, 0);
-      const medicineNetTotal = selectedMedicines.reduce((sum, m) => sum + m.total, 0);
-
-      const grandTotal = treatmentTotal + medicineNetTotal; // Base Total before bill discount (₹2510)
-      const billDiscountValue = parseFloat(discount) || 0;
-      const billDiscountAmount = discountType === "Percentage"
-        ? (grandTotal * billDiscountValue) / 100
-        : billDiscountValue;
-      const finalAmount = Math.max(0, grandTotal - billDiscountAmount);
-      const paid = parseFloat(amountPaid) || 0;
+      const totals = calcBillTotals({
+        treatments: selectedTreatments,
+        medicines: selectedMedicines,
+        discount: parseFloat(discount) || 0,
+        discountType,
+        amountPaid: parseFloat(amountPaid) || 0,
+      });
+      // Cannot pay more than the bill.
+      const paid = Math.min(totals.amountPaid, totals.finalAmount);
 
       return await apiRequest("POST", "/api/bills", {
         patientId: selectedPatient.id,
         date: billDate,
         treatments: selectedTreatments,
         medicines: selectedMedicines,
-        treatmentTotal,
-        medicineTotal: medicineNetTotal,
-        grandTotal,
-        discount: billDiscountValue,
+        treatmentTotal: totals.treatmentTotal,
+        medicineTotal: totals.medicineTotal,
+        grandTotal: totals.grandTotal,
+        discount: parseFloat(discount) || 0,
         discountType,
-        finalAmount,
+        finalAmount: totals.finalAmount,
         amountPaid: paid,
         paymentMode: paid > 0 ? paymentMode : undefined,
       });
@@ -210,19 +211,19 @@ export default function BillingCreate() {
     if (treatment) {
       setSelectedTreatments([
         ...selectedTreatments,
-        {
+        withTreatmentLine({
           treatmentId: treatment.id,
           treatmentName: treatment.name,
           price: treatment.defaultPrice,
-        },
+          discountType: "Percentage",
+          discountValue: 0,
+        }),
       ]);
     }
   };
 
-  const updateTreatmentPrice = (index: number, price: number) => {
-    const updated = [...selectedTreatments];
-    updated[index].price = price;
-    setSelectedTreatments(updated);
+  const updateTreatment = (index: number, next: BillTreatmentItem) => {
+    setSelectedTreatments(selectedTreatments.map((t, i) => (i === index ? next : t)));
   };
 
   const removeTreatment = (index: number) => {
@@ -295,21 +296,19 @@ export default function BillingCreate() {
     setSelectedMedicines(selectedMedicines.filter((_, i) => i !== index));
   };
 
-  const treatmentTotal = selectedTreatments.reduce((sum, t) => sum + t.price, 0);
-  const medicineTotal = selectedMedicines.reduce((sum, m) => sum + m.total, 0);
-  const totalMedicineDiscount = selectedMedicines.reduce((sum, m) => sum + (m.discount || 0), 0);
-
-  const grossGrandTotal = treatmentTotal + medicineTotal; // Gross Total of the bill (₹2510)
-
-  const billDiscountValue = parseFloat(discount) || 0;
-  const billDiscountAmount = discountType === "Percentage"
-    ? (grossGrandTotal * billDiscountValue) / 100
-    : billDiscountValue;
-
-  const finalAmount = Math.max(0, grossGrandTotal - billDiscountAmount);
-
   const paid = parseFloat(amountPaid) || 0;
-  const pendingAmount = Math.max(0, finalAmount - paid);
+  const totals = calcBillTotals({
+    treatments: selectedTreatments,
+    medicines: selectedMedicines,
+    discount: parseFloat(discount) || 0,
+    discountType,
+    amountPaid: paid,
+  });
+  const { treatmentTotal, medicineTotal, billDiscountAmount, roundOff, finalAmount } = totals;
+  const grossGrandTotal = totals.grandTotal; // treatments + medicines, after item-level discounts
+  const totalMedicineDiscount = selectedMedicines.reduce((sum, m) => sum + (m.discount || 0), 0);
+  const totalTreatmentDiscount = selectedTreatments.reduce((sum, t) => sum + (t.discount || 0), 0);
+  const pendingAmount = calcPending(finalAmount, paid);
 
   return (
     <div className="p-6 max-w-4xl mx-auto space-y-6">
@@ -439,31 +438,12 @@ export default function BillingCreate() {
                 ) : (
                   <div className="space-y-3">
                     {selectedTreatments.map((treatment, index) => (
-                      <div
+                      <TreatmentLineEditor
                         key={index}
-                        className="flex items-center justify-between p-3 bg-muted/30 rounded-lg"
-                      >
-                        <span className="text-sm font-medium">{treatment.treatmentName}</span>
-                        <div className="flex items-center gap-3">
-                          <Input
-                            type="number"
-                            min="0"
-                            value={treatment.price}
-                            onChange={(e) =>
-                              updateTreatmentPrice(index, parseFloat(e.target.value) || 0)
-                            }
-                            className="h-8 w-24"
-                          />
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7 text-destructive"
-                            onClick={() => removeTreatment(index)}
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
-                        </div>
-                      </div>
+                        item={treatment}
+                        onChange={(next) => updateTreatment(index, next)}
+                        onRemove={() => removeTreatment(index)}
+                      />
                     ))}
                   </div>
                 )}
@@ -621,22 +601,28 @@ export default function BillingCreate() {
               {/* Bill Summary */}
               <div className="border-t pt-4 space-y-3">
                 <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Treatment Total</span>
-                  <span>₹{treatmentTotal.toFixed(2)}</span>
+                  <span className="text-muted-foreground">Treatment Total (Net)</span>
+                  <span>₹{formatMoney(treatmentTotal)}</span>
                 </div>
+                {totalTreatmentDiscount > 0 && (
+                  <div className="flex justify-between text-sm text-green-600">
+                    <span>Treatment Level Discount</span>
+                    <span>-₹{formatMoney(totalTreatmentDiscount)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">Medicine Total (Net)</span>
-                  <span>₹{medicineTotal.toFixed(2)}</span>
+                  <span>₹{formatMoney(medicineTotal)}</span>
                 </div>
                 {totalMedicineDiscount > 0 && (
                   <div className="flex justify-between text-sm text-green-600">
                     <span>Medicine Level Discount</span>
-                    <span>-₹{totalMedicineDiscount.toFixed(2)}</span>
+                    <span>-₹{formatMoney(totalMedicineDiscount)}</span>
                   </div>
                 )}
                 <div className="flex justify-between font-semibold text-lg border-t pt-3">
                   <span>Gross Total</span>
-                  <span>₹{grossGrandTotal.toFixed(2)}</span>
+                  <span>₹{formatMoney(grossGrandTotal)}</span>
                 </div>
                 
                 {/* Bill Discount Picker */}
@@ -670,13 +656,20 @@ export default function BillingCreate() {
                 {billDiscountAmount > 0 && (
                   <div className="flex justify-between text-sm text-green-600 font-medium">
                     <span>Applied Bill Discount {discountType === "Percentage" ? `(${discount}%)` : ""}</span>
-                    <span>-₹{billDiscountAmount.toFixed(2)}</span>
+                    <span>-₹{formatMoney(billDiscountAmount)}</span>
+                  </div>
+                )}
+
+                {roundOff !== 0 && (
+                  <div className="flex justify-between text-sm text-muted-foreground">
+                    <span>Round Off</span>
+                    <span>{roundOff > 0 ? "+" : "-"}₹{formatMoney(Math.abs(roundOff))}</span>
                   </div>
                 )}
 
                 <div className="flex justify-between font-bold text-xl border-t pt-3 text-primary">
                   <span>Final Amount</span>
-                  <span>₹{finalAmount.toFixed(2)}</span>
+                  <span>₹{formatMoney(finalAmount)}</span>
                 </div>
               </div>
 
@@ -713,11 +706,11 @@ export default function BillingCreate() {
                   <div className="bg-muted/50 p-3 rounded-lg space-y-2">
                     <div className="flex justify-between text-sm">
                       <span className="text-muted-foreground">Amount Paid:</span>
-                      <span>₹{paid.toFixed(2)}</span>
+                      <span>₹{formatMoney(paid)}</span>
                     </div>
                     <div className={`flex justify-between text-sm font-semibold ${pendingAmount > 0 ? 'text-destructive' : 'text-green-600'}`}>
                       <span>Pending Amount:</span>
-                      <span>₹{pendingAmount.toFixed(2)}</span>
+                      <span>₹{formatMoney(pendingAmount)}</span>
                     </div>
                   </div>
                 </div>
