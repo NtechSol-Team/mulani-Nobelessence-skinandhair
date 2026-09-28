@@ -18,7 +18,8 @@ import {
     UserX,
     RefreshCw,
     Phone,
-    ChevronDown
+    ChevronDown,
+    Stethoscope
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -68,7 +69,7 @@ import {
     AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
-import type { Appointment, Patient } from "@shared/schema";
+import type { Appointment, Patient, Department } from "@shared/schema";
 import { extractPaginatedData } from "@/lib/utils";
 import { insertAppointmentSchema, APPOINTMENT_STATUSES, type AppointmentStatus } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
@@ -85,6 +86,7 @@ const appointmentFormSchema = z.object({
     reason: z.string().optional().default(""),
     status: z.enum(APPOINTMENT_STATUSES).default("Scheduled"),
     type: z.enum(["New", "Follow-up"]).default("New"),
+    department: z.string().optional().default(""),
 }).superRefine((data, ctx) => {
     if (data.isNewPatient) {
         if (!data.newPatientName || data.newPatientName.trim().length === 0) {
@@ -156,6 +158,12 @@ export default function AppointmentMaster() {
     });
     const patients = extractPaginatedData<Patient>(patientsResponse);
 
+    const { data: departmentsResponse } = useQuery({
+        queryKey: ["/api/departments"],
+    });
+    const departments = extractPaginatedData<Department>(departmentsResponse);
+    const [departmentFilter, setDepartmentFilter] = useState<string>("all");
+
     const form = useForm<any>({
         resolver: zodResolver(appointmentFormSchema),
         defaultValues: {
@@ -168,6 +176,7 @@ export default function AppointmentMaster() {
             reason: "",
             status: "Scheduled",
             type: "New",
+            department: "",
         },
     });
 
@@ -226,6 +235,7 @@ export default function AppointmentMaster() {
                 reason: appt.reason,
                 status,
                 type: appt.type || "New",
+                department: appt.department || "",
             });
         },
         onSuccess: (_data, { appt, status, silent }) => {
@@ -284,11 +294,18 @@ export default function AppointmentMaster() {
             reason: "",
             status: "Scheduled",
             type: "New",
+            department: "None",
         });
     };
 
     const openEditDialog = (appointment: Appointment) => {
         setEditingAppointment(appointment);
+        const patient = patients.find(p => p.id === appointment.patientId);
+        const deptToSet = (appointment.department && appointment.department !== "None" && appointment.department !== "")
+            ? appointment.department
+            : (patient?.department && patient.department !== "None" && patient.department !== "")
+                ? patient.department
+                : "None";
         form.reset({
             isNewPatient: false,
             patientId: appointment.patientId,
@@ -299,6 +316,7 @@ export default function AppointmentMaster() {
             reason: appointment.reason,
             status: appointment.status as AppointmentStatus,
             type: appointment.type || "New",
+            department: deptToSet,
         });
         setIsDialogOpen(true);
     };
@@ -307,6 +325,12 @@ export default function AppointmentMaster() {
     const openReappointDialog = (appointment: Appointment) => {
         setEditingAppointment(null);
         setReappointSource(appointment);
+        const patient = patients.find(p => p.id === appointment.patientId);
+        const deptToSet = (appointment.department && appointment.department !== "None" && appointment.department !== "")
+            ? appointment.department
+            : (patient?.department && patient.department !== "None" && patient.department !== "")
+                ? patient.department
+                : "None";
         form.reset({
             isNewPatient: false,
             patientId: appointment.patientId,
@@ -317,6 +341,7 @@ export default function AppointmentMaster() {
             reason: appointment.reason,
             status: "Scheduled",
             type: appointment.type || "New",
+            department: deptToSet,
         });
         setIsDialogOpen(true);
     };
@@ -327,6 +352,8 @@ export default function AppointmentMaster() {
             const source = reappointSource; // closeDialog() clears it when the create succeeds
             let patientIdToUse = data.patientId;
 
+            const chosenDept = data.department && data.department !== "None" ? data.department : "";
+
             if (data.isNewPatient && !editingAppointment) {
                 // Register new patient
                 const patientData = {
@@ -336,6 +363,7 @@ export default function AppointmentMaster() {
                     dob: "",
                     status: "Active" as const,
                     source: "Walk-in" as const,
+                    department: chosenDept,
                 };
                 const response = await apiRequest("POST", "/api/patients", patientData);
                 const newPatient = await response.json();
@@ -351,6 +379,7 @@ export default function AppointmentMaster() {
                 reason: data.reason,
                 status: data.status,
                 type: data.type,
+                department: chosenDept,
             };
 
             if (editingAppointment) {
@@ -373,6 +402,17 @@ export default function AppointmentMaster() {
         }
     };
 
+    const getApptDept = (appt: Appointment) => {
+        if (appt.department && appt.department.trim() !== "" && appt.department !== "None") {
+            return appt.department;
+        }
+        const patient = patients.find(p => p.id === appt.patientId);
+        if (patient?.department && patient.department.trim() !== "" && patient.department !== "None") {
+            return patient.department;
+        }
+        return "General / Unassigned";
+    };
+
     const filteredAppointments = appointments.filter((appt: Appointment) => {
         const patientName = appt.patientName || patients.find(p => p.id === appt.patientId)?.name || "";
         const matchesSearch =
@@ -393,7 +433,9 @@ export default function AppointmentMaster() {
             matchesDate = !selectedDate || appt.date === selectedDate;
         } // if dateFilter is "all", matchesDate is true
 
-        return matchesSearch && matchesDate;
+        const matchesDepartment = departmentFilter === "all" || getApptDept(appt) === departmentFilter;
+
+        return matchesSearch && matchesDate && matchesDepartment;
     });
 
     const todayStr = format(new Date(), "yyyy-MM-dd");
@@ -404,8 +446,18 @@ export default function AppointmentMaster() {
     const isMissed = (a: Appointment) => a.status === "No Show";
 
     const todaysAppointments = appointments.filter(
-        a => a.date === todayStr && a.status !== "No Show" && a.status !== "Rescheduled"
+        a => a.date === todayStr && a.status !== "No Show" && a.status !== "Rescheduled" && (departmentFilter === "all" || getApptDept(a) === departmentFilter)
     );
+
+    // Group today's appointments by department category for category-wise bifurcation
+    const todaysByDept = todaysAppointments.reduce((groups: Record<string, Appointment[]>, appt) => {
+        const deptName = getApptDept(appt);
+        if (!groups[deptName]) {
+            groups[deptName] = [];
+        }
+        groups[deptName].push(appt);
+        return groups;
+    }, {});
 
     const missedAppointments = appointments
         .filter(isMissed)
@@ -544,7 +596,7 @@ Primecare Skin & Health`;
                     <CardTitle className="text-lg font-medium flex items-center justify-between">
                         <div className="flex items-center gap-2">
                             <CalendarIcon className="w-5 h-5 text-blue-600" />
-                            Today's Appointments ({todaysAppointments.length})
+                            Today's Appointments ({todaysAppointments.length}) {departmentFilter !== "all" && <span className="text-sm font-normal text-blue-700">({departmentFilter})</span>}
                         </div>
                         <Badge variant={todaysAppointments.length > 0 ? "default" : "secondary"}>
                             {todaysAppointments.length > 0 ? "Action Required" : "No Appointments"}
@@ -557,99 +609,113 @@ Primecare Skin & Health`;
                             No appointments scheduled for today.
                         </div>
                     ) : (
-                        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                            {todaysAppointments.map((appt) => (
-                                <div key={appt.id} className="p-3 border rounded-md bg-card flex flex-col gap-3 shadow-sm hover:border-blue-200 transition-colors">
-                                    <div className="flex justify-between items-start gap-2">
-                                        <div className="flex items-start gap-2.5">
-                                            {/* Tickbox to complete */}
-                                            <div className="pt-0.5">
-                                                <input
-                                                    type="checkbox"
-                                                    checked={appt.status === "Completed"}
-                                                    disabled={appt.status === "Completed" || updateMutation.isPending}
-                                                    onChange={async (e) => {
-                                                        if (e.target.checked) {
-                                                            const appointmentData = {
-                                                                patientId: appt.patientId,
-                                                                date: appt.date,
-                                                                time: appt.time,
-                                                                reason: appt.reason,
-                                                                status: "Completed",
-                                                                type: appt.type,
-                                                            };
-                                                            await updateMutation.mutateAsync({ id: appt.id, data: appointmentData }).catch(() => {});
-                                                        }
-                                                    }}
-                                                    className="h-4.5 w-4.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer disabled:cursor-not-allowed"
-                                                />
-                                            </div>
-                                            <div>
-                                                <div className={`font-medium flex items-center gap-1.5 ${appt.status === "Completed" ? "line-through text-muted-foreground" : ""}`}>
-                                                    <span>{appt.patientName || patients.find(p => p.id === appt.patientId)?.name || "Unknown Patient"}</span>
-                                                    {appt.type && (
-                                                        <Badge variant="outline" className={`text-[9px] px-1 py-0 h-4 ${
-                                                            appt.type === "Follow-up"
-                                                                ? "bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-50"
-                                                                : "bg-teal-50 text-teal-700 border-teal-200 hover:bg-teal-50"
-                                                        }`}>
-                                                            {appt.type}
-                                                        </Badge>
-                                                    )}
-                                                </div>
-                                                <div className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
-                                                    <Clock className="w-3 h-3 text-muted-foreground" />
-                                                    {appt.time}
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <Badge variant="outline" className={
-                                            appt.status === "Scheduled" ? "bg-blue-50 text-blue-700 border-blue-200" :
-                                                appt.status === "Completed" ? "bg-green-50 text-green-700 border-green-200" : "bg-gray-100"
-                                        }>{appt.status}</Badge>
+                        <div className="space-y-6">
+                            {Object.entries(todaysByDept).map(([deptName, deptAppts]) => (
+                                <div key={deptName} className="space-y-3">
+                                    <div className="flex items-center gap-2 text-sm font-semibold text-foreground/90 border-b border-border/60 pb-1.5 pt-1">
+                                        <Stethoscope className="w-4 h-4 text-indigo-600" />
+                                        <span>{deptName}</span>
+                                        <Badge variant="secondary" className="text-xs font-normal bg-indigo-50 text-indigo-700 border border-indigo-200">
+                                            {deptAppts.length} {deptAppts.length === 1 ? "appointment" : "appointments"}
+                                        </Badge>
                                     </div>
-                                    
-                                    {appt.reason && (
-                                        <div className="text-xs text-muted-foreground bg-muted/30 p-2 rounded" title={appt.reason}>
-                                            <span className="font-semibold text-foreground/70 mr-1">Reason:</span>
-                                            {appt.reason}
-                                        </div>
-                                    )}
+                                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                                        {deptAppts.map((appt) => (
+                                            <div key={appt.id} className="p-3 border rounded-md bg-card flex flex-col gap-3 shadow-sm hover:border-blue-200 transition-colors">
+                                                <div className="flex justify-between items-start gap-2">
+                                                    <div className="flex items-start gap-2.5">
+                                                        {/* Tickbox to complete */}
+                                                        <div className="pt-0.5">
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={appt.status === "Completed"}
+                                                                disabled={appt.status === "Completed" || updateMutation.isPending}
+                                                                onChange={async (e) => {
+                                                                    if (e.target.checked) {
+                                                                        const appointmentData = {
+                                                                            patientId: appt.patientId,
+                                                                            date: appt.date,
+                                                                            time: appt.time,
+                                                                            reason: appt.reason,
+                                                                            status: "Completed",
+                                                                            type: appt.type,
+                                                                            department: appt.department,
+                                                                        };
+                                                                        await updateMutation.mutateAsync({ id: appt.id, data: appointmentData }).catch(() => {});
+                                                                    }
+                                                                }}
+                                                                className="h-4.5 w-4.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer disabled:cursor-not-allowed"
+                                                            />
+                                                        </div>
+                                                        <div>
+                                                            <div className={`font-medium flex items-center gap-1.5 ${appt.status === "Completed" ? "line-through text-muted-foreground" : ""}`}>
+                                                                <span>{appt.patientName || patients.find(p => p.id === appt.patientId)?.name || "Unknown Patient"}</span>
+                                                                {appt.type && (
+                                                                    <Badge variant="outline" className={`text-[9px] px-1 py-0 h-4 ${
+                                                                        appt.type === "Follow-up"
+                                                                            ? "bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-50"
+                                                                            : "bg-teal-50 text-teal-700 border-teal-200 hover:bg-teal-50"
+                                                                    }`}>
+                                                                        {appt.type}
+                                                                    </Badge>
+                                                                )}
+                                                            </div>
+                                                            <div className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
+                                                                <Clock className="w-3 h-3 text-muted-foreground" />
+                                                                {appt.time}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    <Badge variant="outline" className={
+                                                        appt.status === "Scheduled" ? "bg-blue-50 text-blue-700 border-blue-200" :
+                                                            appt.status === "Completed" ? "bg-green-50 text-green-700 border-green-200" : "bg-gray-100"
+                                                    }>{appt.status}</Badge>
+                                                </div>
+                                                
+                                                {appt.reason && (
+                                                    <div className="text-xs text-muted-foreground bg-muted/30 p-2 rounded" title={appt.reason}>
+                                                        <span className="font-semibold text-foreground/70 mr-1">Reason:</span>
+                                                        {appt.reason}
+                                                    </div>
+                                                )}
 
-                                    {/* Action Buttons: Not Come, Reschedule & Edit */}
-                                    <div className="flex gap-2 justify-end pt-1 border-t border-border/40">
-                                        {appt.status === "Scheduled" && (
-                                            <Button
-                                                variant="outline"
-                                                size="sm"
-                                                className="h-7 text-xs px-2 flex items-center gap-1 text-orange-700 hover:bg-orange-50 hover:text-orange-700 hover:border-orange-200"
-                                                disabled={statusMutation.isPending}
-                                                title="Patient did not come - move to the Not Come list"
-                                                onClick={() => statusMutation.mutate({ appt, status: "No Show" })}
-                                            >
-                                                <UserX className="w-3 h-3" />
-                                                Not Come
-                                            </Button>
-                                        )}
-                                        {appt.status !== "Completed" && (
-                                            <Button
-                                                variant="outline"
-                                                size="sm"
-                                                className="h-7 text-xs px-2 flex items-center gap-1 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200"
-                                                onClick={() => openEditDialog(appt)}
-                                            >
-                                                <Clock className="w-3 h-3" />
-                                                Reschedule
-                                            </Button>
-                                        )}
-                                        <Button
-                                            variant="ghost"
-                                            size="sm"
-                                            className="h-7 text-xs px-2 text-muted-foreground hover:text-foreground"
-                                            onClick={() => openEditDialog(appt)}
-                                        >
-                                            Edit Details
-                                        </Button>
+                                                {/* Action Buttons: Not Come, Reschedule & Edit */}
+                                                <div className="flex gap-2 justify-end pt-1 border-t border-border/40">
+                                                    {appt.status === "Scheduled" && (
+                                                        <Button
+                                                            variant="outline"
+                                                            size="sm"
+                                                            className="h-7 text-xs px-2 flex items-center gap-1 text-orange-700 hover:bg-orange-50 hover:text-orange-700 hover:border-orange-200"
+                                                            disabled={statusMutation.isPending}
+                                                            title="Patient did not come - move to the Not Come list"
+                                                            onClick={() => statusMutation.mutate({ appt, status: "No Show" })}
+                                                        >
+                                                            <UserX className="w-3 h-3" />
+                                                            Not Come
+                                                        </Button>
+                                                    )}
+                                                    {appt.status !== "Completed" && (
+                                                        <Button
+                                                            variant="outline"
+                                                            size="sm"
+                                                            className="h-7 text-xs px-2 flex items-center gap-1 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200"
+                                                            onClick={() => openEditDialog(appt)}
+                                                        >
+                                                            <Clock className="w-3 h-3" />
+                                                            Reschedule
+                                                        </Button>
+                                                    )}
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        className="h-7 text-xs px-2 text-muted-foreground hover:text-foreground"
+                                                        onClick={() => openEditDialog(appt)}
+                                                    >
+                                                        Edit Details
+                                                    </Button>
+                                                </div>
+                                            </div>
+                                        ))}
                                     </div>
                                 </div>
                             ))}
@@ -844,6 +910,19 @@ Primecare Skin & Health`;
                                     Custom Date
                                 </Button>
                             </div>
+                             <Select value={departmentFilter} onValueChange={setDepartmentFilter}>
+                                <SelectTrigger className="w-[180px] h-10">
+                                    <SelectValue placeholder="All Departments" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="all">All Departments</SelectItem>
+                                    {departments.map((dept) => (
+                                        <SelectItem key={dept.id} value={dept.name}>
+                                            {dept.name}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
                             {dateFilter === "custom" && (
                                 <div className="flex items-center gap-2">
                                     <Input
@@ -922,7 +1001,13 @@ Primecare Skin & Health`;
                                                         <FormItem>
                                                             <FormLabel>Patient</FormLabel>
                                                             <Select
-                                                                onValueChange={field.onChange}
+                                                                onValueChange={(val) => {
+                                                                    field.onChange(val);
+                                                                    const selPatient = patients.find(p => p.id === val);
+                                                                    if (selPatient?.department && !form.getValues("department")) {
+                                                                        form.setValue("department", selPatient.department);
+                                                                    }
+                                                                }}
                                                                 value={field.value}
                                                                 disabled={!!editingAppointment || !!reappointSource} // Patient is fixed on edit / re-appoint
                                                             >
@@ -974,6 +1059,35 @@ Primecare Skin & Health`;
                                                     />
                                                 </div>
                                             )}
+
+                                            <FormField
+                                                control={form.control}
+                                                name="department"
+                                                render={({ field }) => (
+                                                    <FormItem>
+                                                        <FormLabel>Treatment Department</FormLabel>
+                                                        <Select
+                                                            onValueChange={field.onChange}
+                                                            value={field.value}
+                                                        >
+                                                            <FormControl>
+                                                                <SelectTrigger>
+                                                                    <SelectValue placeholder="Select Department" />
+                                                                </SelectTrigger>
+                                                            </FormControl>
+                                                            <SelectContent>
+                                                                <SelectItem value="None">None / General</SelectItem>
+                                                                {departments.map((dept) => (
+                                                                    <SelectItem key={dept.id} value={dept.name}>
+                                                                        {dept.name}
+                                                                    </SelectItem>
+                                                                ))}
+                                                            </SelectContent>
+                                                        </Select>
+                                                        <FormMessage />
+                                                    </FormItem>
+                                                )}
+                                            />
 
                                             <FormField
                                                 control={form.control}
@@ -1219,7 +1333,7 @@ function AppointmentsTable({ appointments, patients, getStatusBadge, onEdit, onD
                                 </div>
                             </TableCell>
                             <TableCell>
-                                <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-2 flex-wrap">
                                     <span className="font-medium">{appt.patientName || "Unknown Patient"}</span>
                                     {appt.type && (
                                         <Badge variant="outline" className={`text-[10px] px-1.5 py-0 h-5 ${
@@ -1228,6 +1342,11 @@ function AppointmentsTable({ appointments, patients, getStatusBadge, onEdit, onD
                                                 : "bg-teal-50 text-teal-700 border-teal-200 hover:bg-teal-50"
                                         }`}>
                                             {appt.type}
+                                        </Badge>
+                                    )}
+                                    {appt.department && (
+                                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-5 bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-50">
+                                            {appt.department}
                                         </Badge>
                                     )}
                                 </div>

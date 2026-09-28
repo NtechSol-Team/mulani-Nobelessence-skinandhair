@@ -775,6 +775,12 @@ export async function registerRoutes(
     try {
       console.log("Creating appointment with body:", req.body);
       const validated = insertAppointmentSchema.parse(req.body);
+      if (!validated.department || validated.department === "" || validated.department === "None") {
+        const patient = await storage.getPatient(validated.patientId);
+        if (patient?.department && patient.department !== "None") {
+          validated.department = patient.department;
+        }
+      }
       const appointment = await storage.createAppointment(validated);
       emitAppointmentBooked(appointment);
       res.status(201).json(appointment);
@@ -789,8 +795,17 @@ export async function registerRoutes(
 
   app.patch("/api/appointments/:id", checkPermission("appointments", "edit"), async (req, res) => {
     try {
-      const validated = insertAppointmentSchema.parse(req.body);
       const previous = await storage.getAppointment(req.params.id);
+      const validated = insertAppointmentSchema.parse(req.body);
+      if (previous && (!req.body.department || req.body.department === "" || req.body.department === "None")) {
+        validated.department = previous.department || "";
+      }
+      if (!validated.department || validated.department === "" || validated.department === "None") {
+        const patient = await storage.getPatient(validated.patientId);
+        if (patient?.department && patient.department !== "None") {
+          validated.department = patient.department;
+        }
+      }
       const appointment = await storage.updateAppointment(req.params.id, validated);
       if (!appointment) {
         return res.status(404).json({ error: "Appointment not found" });

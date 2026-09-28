@@ -44,6 +44,7 @@ export default function Dashboard() {
       reason: "",
       status: "Scheduled",
       type: "New",
+      department: "",
     },
   });
 
@@ -51,6 +52,7 @@ export default function Dashboard() {
   useEffect(() => {
     if (selectedPatientForAppointment) {
       form.setValue("patientId", selectedPatientForAppointment.id);
+      form.setValue("department", selectedPatientForAppointment.department || "");
     }
   }, [selectedPatientForAppointment, form]);
 
@@ -609,6 +611,35 @@ export default function Dashboard() {
                     <FormControl>
                       <Input type="date" {...field} />
                     </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="department"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Treatment Department</FormLabel>
+                    <Select
+                      onValueChange={field.onChange}
+                      value={field.value || ""}
+                    >
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select Department" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="None">None / General</SelectItem>
+                        {departments.map((dept) => (
+                          <SelectItem key={dept.id} value={dept.name}>
+                            {dept.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                     <FormMessage />
                   </FormItem>
                 )}

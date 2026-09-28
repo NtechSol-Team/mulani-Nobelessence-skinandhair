@@ -53,7 +53,7 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
-import type { Patient, Visit, Bill, CRMInteraction, Department, Medicine } from "@shared/schema";
+import type { Patient, Visit, Bill, CRMInteraction, Department, Medicine, Appointment } from "@shared/schema";
 import { insertVisitSchema, insertPatientSchema } from "@shared/schema";
 import { billBreakdown, formatMoney, isPending } from "@shared/money";
 import { apiRequest } from "@/lib/queryClient";
@@ -111,6 +111,11 @@ export default function PatientDetails() {
     queryKey: ["/api/bills"],
   });
   const bills = extractPaginatedData<Bill>(billsResponse);
+  const { data: patientAppointments = [] } = useQuery<Appointment[]>({
+    queryKey: [`/api/appointments/patient/${patientId}`],
+    enabled: !!patientId,
+  });
+
   const patientBills = bills
     .filter((b) => b.patientId === patientId)
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
@@ -1228,249 +1233,58 @@ export default function PatientDetails() {
           )}
         </CardContent>
       </Card>
-
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-4 pb-4">
           <div>
-            <CardTitle className="text-lg">CRM History & Follow-ups</CardTitle>
+            <CardTitle className="text-lg">Appointments History</CardTitle>
             <p className="text-sm text-muted-foreground mt-1">
-              {crmInteractions.length} interaction{crmInteractions.length !== 1 ? "s" : ""} logged
+              {patientAppointments.length} appointment{patientAppointments.length !== 1 ? "s" : ""} booked
             </p>
-          </div>
-          <div className="flex gap-2">
-            <Dialog open={isCRMDialogOpen} onOpenChange={(open) => {
-              setIsCRMDialogOpen(open);
-              if (!open) {
-                setEditingInteraction(null);
-                crmForm.reset({
-                  date: format(new Date(), "yyyy-MM-dd"),
-                  type: "Follow-up",
-                  channel: "Call",
-                  notes: "",
-                  outcome: "",
-                  nextCallingDate: "",
-                });
-              }
-            }}>
-              <DialogTrigger asChild>
-                <Button variant="outline" size="sm" onClick={() => setIsCRMDialogOpen(true)}>
-                  <MessageSquare className="w-4 h-4 mr-2" />
-                  Log Contact
-                </Button>
-              </DialogTrigger>
-              <DialogContent className="sm:max-w-md">
-                <DialogHeader>
-                  <DialogTitle>{editingInteraction ? t("Edit CRM Interaction") : t("Log CRM Interaction")}</DialogTitle>
-                </DialogHeader>
-                <form
-                  onSubmit={crmForm.handleSubmit((data) => {
-                    if (editingInteraction) {
-                      updateInteractionMutation.mutate({ id: editingInteraction.id, ...data });
-                    } else {
-                      addInteractionMutation.mutate(data);
-                    }
-                  })}
-                  className="space-y-4"
-                >
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="text-xs font-semibold uppercase tracking-wider block mb-1">{t("Date")}</label>
-                      <Input
-                        type="date"
-                        name={crmForm.register("date").name}
-                        onChange={crmForm.register("date").onChange}
-                        onBlur={crmForm.register("date").onBlur}
-                        ref={crmForm.register("date").ref}
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs font-semibold uppercase tracking-wider block mb-1">{t("Channel")}</label>
-                      <select
-                        className="w-full h-10 border rounded-md px-3 bg-background"
-                        name={crmForm.register("channel").name}
-                        onChange={crmForm.register("channel").onChange}
-                        onBlur={crmForm.register("channel").onBlur}
-                        ref={crmForm.register("channel").ref}
-                      >
-                        <option value="Call">{t("Call")}</option>
-                        <option value="WhatsApp">{t("WhatsApp")}</option>
-                        <option value="Email">{t("Email")}</option>
-                        <option value="In-Person">{t("In-Person")}</option>
-                      </select>
-                    </div>
-                  </div>
-                  <div>
-                    <label className="text-xs font-semibold uppercase tracking-wider block mb-1">{t("Interaction Type")}</label>
-                    <select
-                      className="w-full h-10 border rounded-md px-3 bg-background"
-                      name={crmForm.register("type").name}
-                      onChange={crmForm.register("type").onChange}
-                      onBlur={crmForm.register("type").onBlur}
-                      ref={crmForm.register("type").ref}
-                    >
-                      <option value="Follow-up">{t("Follow-up")}</option>
-                      <option value="Inquiry">{t("Inquiry")}</option>
-                      <option value="Treatment Feedback">{t("Treatment Feedback")}</option>
-                      <option value="Appointment Confirmation">{t("Appointment Confirmation")}</option>
-                      <option value="Birthday Wish">{t("Birthday Wish")}</option>
-                      <option value="Complaint">{t("Complaint")}</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-xs font-semibold uppercase tracking-wider block mb-1">{t("Notes")}</label>
-                    <Textarea
-                      placeholder={t("Interaction details...")}
-                      className="min-h-[80px]"
-                      name={crmForm.register("notes").name}
-                      onChange={crmForm.register("notes").onChange}
-                      onBlur={crmForm.register("notes").onBlur}
-                      ref={crmForm.register("notes").ref}
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs font-semibold uppercase tracking-wider block mb-1">{t("Outcome (Optional)")}</label>
-                    <Input
-                      placeholder={t("e.g., patient booked appointment, will call back later...")}
-                      name={crmForm.register("outcome").name}
-                      onChange={crmForm.register("outcome").onChange}
-                      onBlur={crmForm.register("outcome").onBlur}
-                      ref={crmForm.register("outcome").ref}
-                    />
-                  </div>
-                  {!editingInteraction && (
-                    <div>
-                      <label className="text-xs font-semibold uppercase tracking-wider block mb-1">{t("Next Calling Date (Optional)")}</label>
-                      <Input
-                        type="date"
-                        name={crmForm.register("nextCallingDate").name}
-                        onChange={crmForm.register("nextCallingDate").onChange}
-                        onBlur={crmForm.register("nextCallingDate").onBlur}
-                        ref={crmForm.register("nextCallingDate").ref}
-                      />
-                    </div>
-                  )}
-                  <div className="flex justify-end gap-3 pt-2">
-                    <Button type="button" variant="outline" onClick={() => setIsCRMDialogOpen(false)}>{t("Cancel")}</Button>
-                    <Button type="submit" disabled={addInteractionMutation.isPending || updateInteractionMutation.isPending}>
-                      {addInteractionMutation.isPending || updateInteractionMutation.isPending ? t("Saving...") : t("Save")}
-                    </Button>
-                  </div>
-                </form>
-              </DialogContent>
-            </Dialog>
-
-            <Dialog open={isTaskDialogOpen} onOpenChange={setIsTaskDialogOpen}>
-              <DialogTrigger asChild>
-                <Button size="sm">
-                  <CheckSquare className="w-4 h-4 mr-2" />
-                  Add Task
-                </Button>
-              </DialogTrigger>
-              <DialogContent className="sm:max-w-md">
-                <DialogHeader>
-                  <DialogTitle>{t("Add CRM Follow-up Task")}</DialogTitle>
-                </DialogHeader>
-                <form onSubmit={crmTaskForm.handleSubmit((data) => addTaskMutation.mutate(data))} className="space-y-4">
-                  <div>
-                    <label className="text-xs font-semibold uppercase tracking-wider block mb-1">{t("Due Date")}</label>
-                    <Input
-                      type="date"
-                      name={crmTaskForm.register("dueDate").name}
-                      onChange={crmTaskForm.register("dueDate").onChange}
-                      onBlur={crmTaskForm.register("dueDate").onBlur}
-                      ref={crmTaskForm.register("dueDate").ref}
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs font-semibold uppercase tracking-wider block mb-1">{t("Task Priority")}</label>
-                    <select
-                      className="w-full h-10 border rounded-md px-3 bg-background"
-                      name={crmTaskForm.register("priority").name}
-                      onChange={crmTaskForm.register("priority").onChange}
-                      onBlur={crmTaskForm.register("priority").onBlur}
-                      ref={crmTaskForm.register("priority").ref}
-                    >
-                      <option value="Low">{t("Low")}</option>
-                      <option value="Medium">{t("Medium")}</option>
-                      <option value="High">{t("High")}</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-xs font-semibold uppercase tracking-wider block mb-1">{t("Task Description")}</label>
-                    <Textarea
-                      placeholder={t("e.g., call patient to check recovery post chemical peel...")}
-                      className="min-h-[80px]"
-                      name={crmTaskForm.register("description").name}
-                      onChange={crmTaskForm.register("description").onChange}
-                      onBlur={crmTaskForm.register("description").onBlur}
-                      ref={crmTaskForm.register("description").ref}
-                      required
-                    />
-                  </div>
-                  <div className="flex justify-end gap-3 pt-2">
-                    <Button type="button" variant="outline" onClick={() => setIsTaskDialogOpen(false)}>{t("Cancel")}</Button>
-                    <Button type="submit" disabled={addTaskMutation.isPending}>
-                      {addTaskMutation.isPending ? t("Creating...") : t("Create Task")}
-                    </Button>
-                  </div>
-                </form>
-              </DialogContent>
-            </Dialog>
           </div>
         </CardHeader>
         <CardContent>
-          {crmInteractions.length === 0 ? (
+          {patientAppointments.length === 0 ? (
             <div className="text-center py-8">
-              <MessageSquare className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
-              <p className="text-muted-foreground">No interactions logged yet</p>
+              <Calendar className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
+              <p className="text-muted-foreground">No appointments booked yet</p>
             </div>
           ) : (
             <div className="space-y-4">
-              {crmInteractions.map((interaction) => (
-                <div key={interaction.id} className="p-4 rounded-lg border bg-card relative hover-elevate">
-                  <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
-                    <div className="flex items-center gap-2">
-                      <Badge variant="outline" className="bg-primary/5 text-primary border-primary/20">
-                        {interaction.type}
+              {patientAppointments.map((appt) => (
+                <div
+                  key={appt.id}
+                  className="flex items-center justify-between p-4 rounded-lg border bg-card hover-elevate"
+                >
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-medium">
+                        {format(new Date(appt.date), "dd MMM yyyy")} - {appt.time}
+                      </span>
+                      <Badge variant="outline" className={
+                        appt.status === "Scheduled" ? "bg-blue-50 text-blue-700 border-blue-200" :
+                        appt.status === "Completed" ? "bg-green-50 text-green-700 border-green-200" :
+                        appt.status === "No Show" ? "bg-orange-50 text-orange-700 border-orange-200" : "bg-gray-100"
+                      }>
+                        {appt.status === "No Show" ? "Not Come" : appt.status}
                       </Badge>
-                      <Badge variant="secondary" className="text-xs font-normal">
-                        {interaction.channel}
-                      </Badge>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
-                        onClick={() => {
-                          setEditingInteraction(interaction);
-                          crmForm.reset({
-                            date: interaction.date,
-                            type: interaction.type,
-                            channel: interaction.channel,
-                            notes: interaction.notes,
-                            outcome: interaction.outcome || "",
-                            nextCallingDate: "",
-                          });
-                          setIsCRMDialogOpen(true);
-                        }}
-                        title={t("Edit Log")}
-                      >
-                        <Pencil className="w-3 h-3" />
-                      </Button>
+                      {appt.type && (
+                        <Badge variant="outline" className="text-xs bg-purple-50 text-purple-700 border-purple-200">
+                          {appt.type}
+                        </Badge>
+                      )}
+                      {appt.department && (
+                        <Badge variant="outline" className="text-xs bg-indigo-50 text-indigo-700 border-indigo-200 flex items-center gap-1">
+                          <Stethoscope className="w-3 h-3 text-indigo-600" />
+                          {appt.department}
+                        </Badge>
+                      )}
                     </div>
-                    <span className="text-xs text-muted-foreground font-medium">
-                      {format(new Date(interaction.date), "dd MMM yyyy")}
-                    </span>
+                    {appt.reason && (
+                      <div className="text-sm text-muted-foreground">
+                        Reason: {appt.reason}
+                      </div>
+                    )}
                   </div>
-                  <p className="text-sm font-normal text-foreground mb-1">
-                    {interaction.notes}
-                  </p>
-                  {interaction.outcome && (
-                    <div className="text-xs text-muted-foreground mt-2 border-t pt-2 flex items-center gap-1.5">
-                      <span className="font-semibold">Outcome:</span>
-                      <span>{interaction.outcome}</span>
-                    </div>
-                  )}
                 </div>
               ))}
             </div>

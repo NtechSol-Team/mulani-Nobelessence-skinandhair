@@ -278,6 +278,7 @@ type DbAppointmentRow = {
   reason: string;
   status: string;
   type?: string;
+  department?: string;
 };
 
 type DbPaymentLedgerRow = {
@@ -560,8 +561,9 @@ async function ensureTables(): Promise<void> {
   // Migration for new time column
   await pool.query("ALTER TABLE appointments ADD COLUMN IF NOT EXISTS time TEXT DEFAULT ''");
 
-  // Migration for Appointment type
+  // Migration for Appointment type & department
   await pool.query("ALTER TABLE appointments ADD COLUMN IF NOT EXISTS type TEXT DEFAULT 'New'");
+  await pool.query("ALTER TABLE appointments ADD COLUMN IF NOT EXISTS department TEXT DEFAULT ''");
 
   // Migration for Medicine type
   await pool.query("ALTER TABLE medicines ADD COLUMN IF NOT EXISTS type TEXT DEFAULT 'Medicine'");
@@ -948,6 +950,7 @@ const mapAppointment = (row: DbAppointmentRow): Appointment => ({
   status: row.status,
   isUpcoming: new Date(row.date) >= new Date(new Date().setHours(0, 0, 0, 0)),
   type: (row.type || "New") as "New" | "Follow-up",
+  department: row.department || "",
 });
 
 const mapPaymentLedger = (row: DbPaymentLedgerRow): PaymentLedger => ({
@@ -2383,7 +2386,7 @@ export class PostgresStorage implements IStorage {
       return cached;
     }
     const { rows } = await pool.query<DbAppointmentRow>(
-      `SELECT a.id, a.patient_id, p.name as patient_name, a.date, a.time, a.reason, a.status, a.type 
+      `SELECT a.id, a.patient_id, p.name as patient_name, a.date, a.time, a.reason, a.status, a.type, a.department 
        FROM appointments a
        LEFT JOIN patients p ON a.patient_id = p.id
        ORDER BY a.date ASC, a.time ASC`
@@ -2403,7 +2406,7 @@ export class PostgresStorage implements IStorage {
     }
     const dbId = this.convertId("appointments", id);
     const { rows } = await pool.query<DbAppointmentRow>(
-      `SELECT a.id, a.patient_id, p.name as patient_name, a.date, a.time, a.reason, a.status, a.type 
+      `SELECT a.id, a.patient_id, p.name as patient_name, a.date, a.time, a.reason, a.status, a.type, a.department 
        FROM appointments a
        LEFT JOIN patients p ON a.patient_id = p.id
        WHERE a.id = $1`,
@@ -2426,7 +2429,7 @@ export class PostgresStorage implements IStorage {
     }
     const dbPatientId = this.convertId("patients", patientId);
     const { rows } = await pool.query<DbAppointmentRow>(
-      `SELECT a.id, a.patient_id, p.name as patient_name, a.date, a.time, a.reason, a.status, a.type 
+      `SELECT a.id, a.patient_id, p.name as patient_name, a.date, a.time, a.reason, a.status, a.type, a.department 
        FROM appointments a
        LEFT JOIN patients p ON a.patient_id = p.id
        WHERE a.patient_id = $1
@@ -2442,18 +2445,18 @@ export class PostgresStorage implements IStorage {
     await this.waitForReady();
     const useNumericId = this.usesNumericId("appointments");
     const query = useNumericId
-      ? `INSERT INTO appointments(patient_id, date, time, reason, status, type)
-         VALUES($1, $2, $3, $4, $5, $6)
-         RETURNING id, patient_id, date, time, reason, status, type`
-      : `INSERT INTO appointments(id, patient_id, date, time, reason, status, type)
+      ? `INSERT INTO appointments(patient_id, date, time, reason, status, type, department)
          VALUES($1, $2, $3, $4, $5, $6, $7)
-         RETURNING id, patient_id, date, time, reason, status, type`;
+         RETURNING id, patient_id, date, time, reason, status, type, department`
+      : `INSERT INTO appointments(id, patient_id, date, time, reason, status, type, department)
+         VALUES($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING id, patient_id, date, time, reason, status, type, department`;
 
     const dbPatientId = this.convertId("patients", insert.patientId);
 
     const params = useNumericId
-      ? [dbPatientId, insert.date, insert.time, insert.reason, insert.status, insert.type || "New"]
-      : [randomUUID(), dbPatientId, insert.date, insert.time, insert.reason, insert.status, insert.type || "New"];
+      ? [dbPatientId, insert.date, insert.time, insert.reason, insert.status, insert.type || "New", insert.department || ""]
+      : [randomUUID(), dbPatientId, insert.date, insert.time, insert.reason, insert.status, insert.type || "New", insert.department || ""];
 
     const { rows } = await pool.query<DbAppointmentRow>(query, params);
 
@@ -2479,10 +2482,10 @@ export class PostgresStorage implements IStorage {
 
     const { rows } = await pool.query<DbAppointmentRow>(
       `UPDATE appointments
-       SET patient_id = $2, date = $3, time = $4, reason = $5, status = $6, type = $7
+       SET patient_id = $2, date = $3, time = $4, reason = $5, status = $6, type = $7, department = $8
        WHERE id = $1
-       RETURNING id, patient_id, date, time, reason, status, type`,
-      [dbId, dbPatientId, insert.date, insert.time, insert.reason, insert.status, insert.type || "New"]
+       RETURNING id, patient_id, date, time, reason, status, type, department`,
+      [dbId, dbPatientId, insert.date, insert.time, insert.reason, insert.status, insert.type || "New", insert.department || ""]
     );
 
     if (!rows[0]) return undefined;
