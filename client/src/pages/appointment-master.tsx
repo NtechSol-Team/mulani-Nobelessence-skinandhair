@@ -1,5 +1,6 @@
 
 import { useState } from "react";
+import { Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -445,9 +446,21 @@ export default function AppointmentMaster() {
     // These leave the normal lists and are tracked in the Not Come section instead.
     const isMissed = (a: Appointment) => a.status === "No Show";
 
+    const allTodayAppointments = appointments.filter(
+        a => a.date === todayStr && a.status !== "No Show" && a.status !== "Rescheduled"
+    );
+
     const todaysAppointments = appointments.filter(
         a => a.date === todayStr && a.status !== "No Show" && a.status !== "Rescheduled" && (departmentFilter === "all" || getApptDept(a) === departmentFilter)
     );
+
+    const masterDeptList = departments.map(d => d.name);
+    const defaultDepts = ["Hair", "Skin", "PRP", "Laser", "Cosmetic", "Dental", "Orthopedic", "Other"];
+    const todayDeptsList = Array.from(new Set([
+        ...masterDeptList,
+        ...defaultDepts,
+        ...allTodayAppointments.map(a => getApptDept(a))
+    ])).filter(d => d && d !== "General / Unassigned");
 
     // Group today's appointments by department category for category-wise bifurcation
     const todaysByDept = todaysAppointments.reduce((groups: Record<string, Appointment[]>, appt) => {
@@ -592,21 +605,47 @@ Primecare Skin & Health`;
 
             {/* Today's Appointment Module - Highlighted */}
             <Card className="border-l-4 border-l-blue-600 shadow-md">
-                <CardHeader className="pb-3 bg-blue-50/50">
-                    <CardTitle className="text-lg font-medium flex items-center justify-between">
-                        <div className="flex items-center gap-2">
+                <CardHeader className="pb-3 bg-blue-50/50 space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                        <CardTitle className="text-lg font-medium flex items-center gap-2">
                             <CalendarIcon className="w-5 h-5 text-blue-600" />
-                            Today's Appointments ({todaysAppointments.length}) {departmentFilter !== "all" && <span className="text-sm font-normal text-blue-700">({departmentFilter})</span>}
-                        </div>
+                            Today's Appointments ({allTodayAppointments.length}) {departmentFilter !== "all" && <span className="text-sm font-normal text-blue-700">({departmentFilter})</span>}
+                        </CardTitle>
                         <Badge variant={todaysAppointments.length > 0 ? "default" : "secondary"}>
                             {todaysAppointments.length > 0 ? "Action Required" : "No Appointments"}
                         </Badge>
-                    </CardTitle>
+                    </div>
+
+                    {/* Department Category Filter Bar */}
+                    <div className="flex items-center gap-1.5 flex-wrap pt-2 border-t border-blue-100/80">
+                        <Button
+                            variant={departmentFilter === "all" ? "default" : "outline"}
+                            size="sm"
+                            onClick={() => setDepartmentFilter("all")}
+                            className={`h-7 text-xs font-medium ${departmentFilter === "all" ? "bg-blue-600 hover:bg-blue-700 text-white" : "bg-white"}`}
+                        >
+                            All ({allTodayAppointments.length})
+                        </Button>
+                        {todayDeptsList.map((deptName) => {
+                            const count = allTodayAppointments.filter(a => getApptDept(a) === deptName).length;
+                            return (
+                                <Button
+                                    key={deptName}
+                                    variant={departmentFilter === deptName ? "default" : "outline"}
+                                    size="sm"
+                                    onClick={() => setDepartmentFilter(deptName)}
+                                    className={`h-7 text-xs font-medium ${departmentFilter === deptName ? "bg-blue-600 hover:bg-blue-700 text-white" : "bg-white"}`}
+                                >
+                                    {deptName} ({count})
+                                </Button>
+                            );
+                        })}
+                    </div>
                 </CardHeader>
                 <CardContent className="pt-4">
                     {todaysAppointments.length === 0 ? (
                         <div className="text-center py-4 text-muted-foreground">
-                            No appointments scheduled for today.
+                            No appointments scheduled for today{departmentFilter !== "all" ? ` in ${departmentFilter}` : ""}.
                         </div>
                     ) : (
                         <div className="space-y-6">
@@ -620,102 +659,132 @@ Primecare Skin & Health`;
                                         </Badge>
                                     </div>
                                     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                                        {deptAppts.map((appt) => (
-                                            <div key={appt.id} className="p-3 border rounded-md bg-card flex flex-col gap-3 shadow-sm hover:border-blue-200 transition-colors">
-                                                <div className="flex justify-between items-start gap-2">
-                                                    <div className="flex items-start gap-2.5">
-                                                        {/* Tickbox to complete */}
-                                                        <div className="pt-0.5">
-                                                            <input
-                                                                type="checkbox"
-                                                                checked={appt.status === "Completed"}
-                                                                disabled={appt.status === "Completed" || updateMutation.isPending}
-                                                                onChange={async (e) => {
-                                                                    if (e.target.checked) {
-                                                                        const appointmentData = {
-                                                                            patientId: appt.patientId,
-                                                                            date: appt.date,
-                                                                            time: appt.time,
-                                                                            reason: appt.reason,
-                                                                            status: "Completed",
-                                                                            type: appt.type,
-                                                                            department: appt.department,
-                                                                        };
-                                                                        await updateMutation.mutateAsync({ id: appt.id, data: appointmentData }).catch(() => {});
-                                                                    }
-                                                                }}
-                                                                className="h-4.5 w-4.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer disabled:cursor-not-allowed"
-                                                            />
-                                                        </div>
-                                                        <div>
-                                                            <div className={`font-medium flex items-center gap-1.5 ${appt.status === "Completed" ? "line-through text-muted-foreground" : ""}`}>
-                                                                <span>{appt.patientName || patients.find(p => p.id === appt.patientId)?.name || "Unknown Patient"}</span>
-                                                                {appt.type && (
-                                                                    <Badge variant="outline" className={`text-[9px] px-1 py-0 h-4 ${
-                                                                        appt.type === "Follow-up"
-                                                                            ? "bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-50"
-                                                                            : "bg-teal-50 text-teal-700 border-teal-200 hover:bg-teal-50"
-                                                                    }`}>
-                                                                        {appt.type}
-                                                                    </Badge>
-                                                                )}
+                                        {deptAppts.map((appt) => {
+                                            const patientObj = patients.find(p => p.id === appt.patientId);
+                                            const apptDept = getApptDept(appt);
+                                            return (
+                                                <div key={appt.id} className="p-3.5 border rounded-lg bg-card flex flex-col gap-3 shadow-sm hover:border-blue-200 transition-colors">
+                                                    <div className="flex justify-between items-start gap-2">
+                                                        <div className="flex items-start gap-2.5">
+                                                            {/* Tickbox to complete */}
+                                                            <div className="pt-0.5">
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={appt.status === "Completed"}
+                                                                    disabled={appt.status === "Completed" || updateMutation.isPending}
+                                                                    onChange={async (e) => {
+                                                                        if (e.target.checked) {
+                                                                            const appointmentData = {
+                                                                                patientId: appt.patientId,
+                                                                                date: appt.date,
+                                                                                time: appt.time,
+                                                                                reason: appt.reason,
+                                                                                status: "Completed",
+                                                                                type: appt.type,
+                                                                                department: appt.department,
+                                                                            };
+                                                                            await updateMutation.mutateAsync({ id: appt.id, data: appointmentData }).catch(() => {});
+                                                                        }
+                                                                    }}
+                                                                    className="h-4.5 w-4.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer disabled:cursor-not-allowed"
+                                                                />
                                                             </div>
-                                                            <div className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
-                                                                <Clock className="w-3 h-3 text-muted-foreground" />
-                                                                {appt.time}
+                                                            <div>
+                                                                <div className={`font-semibold flex items-center gap-1.5 ${appt.status === "Completed" ? "line-through text-muted-foreground" : ""}`}>
+                                                                    <span>{appt.patientName || patientObj?.name || "Unknown Patient"}</span>
+                                                                    {appt.type && (
+                                                                        <Badge variant="outline" className={`text-[9px] px-1 py-0 h-4 ${
+                                                                            appt.type === "Follow-up"
+                                                                                ? "bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-50"
+                                                                                : "bg-teal-50 text-teal-700 border-teal-200 hover:bg-teal-50"
+                                                                        }`}>
+                                                                            {appt.type}
+                                                                        </Badge>
+                                                                    )}
+                                                                </div>
+                                                                <div className="text-xs text-muted-foreground flex items-center gap-2 mt-1">
+                                                                    <span className="flex items-center gap-1 font-medium text-foreground/80">
+                                                                        <Clock className="w-3 h-3 text-blue-600" />
+                                                                        {formatTime12h(appt.time)}
+                                                                    </span>
+                                                                    {patientObj?.phone && (
+                                                                        <span className="flex items-center gap-0.5 text-muted-foreground">
+                                                                            <Phone className="w-3 h-3" />
+                                                                            {patientObj.phone}
+                                                                        </span>
+                                                                    )}
+                                                                </div>
                                                             </div>
                                                         </div>
+                                                        <Badge variant="outline" className={
+                                                            appt.status === "Scheduled" ? "bg-blue-50 text-blue-700 border-blue-200" :
+                                                                appt.status === "Completed" ? "bg-green-50 text-green-700 border-green-200" : "bg-gray-100"
+                                                        }>{appt.status}</Badge>
                                                     </div>
-                                                    <Badge variant="outline" className={
-                                                        appt.status === "Scheduled" ? "bg-blue-50 text-blue-700 border-blue-200" :
-                                                            appt.status === "Completed" ? "bg-green-50 text-green-700 border-green-200" : "bg-gray-100"
-                                                    }>{appt.status}</Badge>
-                                                </div>
-                                                
-                                                {appt.reason && (
-                                                    <div className="text-xs text-muted-foreground bg-muted/30 p-2 rounded" title={appt.reason}>
-                                                        <span className="font-semibold text-foreground/70 mr-1">Reason:</span>
-                                                        {appt.reason}
-                                                    </div>
-                                                )}
 
-                                                {/* Action Buttons: Not Come, Reschedule & Edit */}
-                                                <div className="flex gap-2 justify-end pt-1 border-t border-border/40">
-                                                    {appt.status === "Scheduled" && (
-                                                        <Button
-                                                            variant="outline"
-                                                            size="sm"
-                                                            className="h-7 text-xs px-2 flex items-center gap-1 text-orange-700 hover:bg-orange-50 hover:text-orange-700 hover:border-orange-200"
-                                                            disabled={statusMutation.isPending}
-                                                            title="Patient did not come - move to the Not Come list"
-                                                            onClick={() => statusMutation.mutate({ appt, status: "No Show" })}
-                                                        >
-                                                            <UserX className="w-3 h-3" />
-                                                            Not Come
-                                                        </Button>
+                                                    <div className="flex items-center gap-2 flex-wrap">
+                                                        <Badge variant="outline" className="bg-indigo-50/80 text-indigo-700 border-indigo-200 text-xs py-0.5 font-medium flex items-center gap-1">
+                                                            <Stethoscope className="w-3 h-3 text-indigo-600" />
+                                                            Department: {apptDept}
+                                                        </Badge>
+                                                    </div>
+                                                    
+                                                    {appt.reason && (
+                                                        <div className="text-xs text-muted-foreground bg-muted/40 p-2 rounded" title={appt.reason}>
+                                                            <span className="font-semibold text-foreground/70 mr-1">Reason:</span>
+                                                            {appt.reason}
+                                                        </div>
                                                     )}
-                                                    {appt.status !== "Completed" && (
+
+                                                    {/* Action Buttons: View Patient, Not Come, Reschedule & Edit */}
+                                                    <div className="flex flex-wrap gap-1.5 justify-end pt-2 border-t border-border/40">
+                                                        <Link href={`/patient/${appt.patientId}?department=${encodeURIComponent(apptDept)}`}>
+                                                            <Button
+                                                                variant="outline"
+                                                                size="sm"
+                                                                className="h-7 text-xs px-2 flex items-center gap-1 text-indigo-700 border-indigo-200 bg-indigo-50/60 hover:bg-indigo-100"
+                                                                title="Open patient profile with department context pre-selected"
+                                                            >
+                                                                <User className="w-3 h-3" />
+                                                                View Patient
+                                                            </Button>
+                                                        </Link>
+                                                        {appt.status === "Scheduled" && (
+                                                            <Button
+                                                                variant="outline"
+                                                                size="sm"
+                                                                className="h-7 text-xs px-2 flex items-center gap-1 text-orange-700 hover:bg-orange-50 hover:text-orange-700 hover:border-orange-200"
+                                                                disabled={statusMutation.isPending}
+                                                                title="Patient did not come - move to the Not Come list"
+                                                                onClick={() => statusMutation.mutate({ appt, status: "No Show" })}
+                                                            >
+                                                                <UserX className="w-3 h-3" />
+                                                                Not Come
+                                                            </Button>
+                                                        )}
+                                                        {appt.status !== "Completed" && (
+                                                            <Button
+                                                                variant="outline"
+                                                                size="sm"
+                                                                className="h-7 text-xs px-2 flex items-center gap-1 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200"
+                                                                onClick={() => openEditDialog(appt)}
+                                                            >
+                                                                <Clock className="w-3 h-3" />
+                                                                Reschedule
+                                                            </Button>
+                                                        )}
                                                         <Button
-                                                            variant="outline"
+                                                            variant="ghost"
                                                             size="sm"
-                                                            className="h-7 text-xs px-2 flex items-center gap-1 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200"
+                                                            className="h-7 text-xs px-2 text-muted-foreground hover:text-foreground"
                                                             onClick={() => openEditDialog(appt)}
                                                         >
-                                                            <Clock className="w-3 h-3" />
-                                                            Reschedule
+                                                            Edit Details
                                                         </Button>
-                                                    )}
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="sm"
-                                                        className="h-7 text-xs px-2 text-muted-foreground hover:text-foreground"
-                                                        onClick={() => openEditDialog(appt)}
-                                                    >
-                                                        Edit Details
-                                                    </Button>
+                                                    </div>
                                                 </div>
-                                            </div>
-                                        ))}
+                                            );
+                                        })}
                                     </div>
                                 </div>
                             ))}

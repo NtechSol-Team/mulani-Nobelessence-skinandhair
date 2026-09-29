@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRoute, Link } from "wouter";
 import { useForm } from "react-hook-form";
@@ -68,6 +68,7 @@ const addVisitSchema = z.object({
   complaints: z.string().optional().default(""),
   diagnosis: z.string().optional().default(""),
   prescription: z.string().optional().default(""),
+  department: z.string().min(1, "Please select a department"),
 });
 
 type AddVisitForm = z.infer<typeof addVisitSchema>;
@@ -115,6 +116,58 @@ export default function PatientDetails() {
     queryKey: [`/api/appointments/patient/${patientId}`],
     enabled: !!patientId,
   });
+
+  // Department selection & auto-context logic
+  const [selectedDepartment, setSelectedDepartment] = useState<string>("All");
+  const [pendingDeptSwitch, setPendingDeptSwitch] = useState<string | null>(null);
+  const [isUnsavedPromptOpen, setIsUnsavedPromptOpen] = useState<boolean>(false);
+
+  // Collect all available master + patient departments
+  const masterDeptNames = departments.map((d) => d.name);
+  const defaultDeptList = ["Hair", "Skin", "PRP", "Laser", "Cosmetic", "Dental", "Orthopedic", "Other"];
+  const allAvailableDepts = Array.from(
+    new Set([
+      ...masterDeptNames,
+      ...defaultDeptList,
+      ...(patient?.department ? [patient.department] : []),
+      ...(visits.map((v) => v.department).filter(Boolean) as string[]),
+      ...(patientAppointments.map((a) => a.department).filter(Boolean) as string[]),
+    ])
+  ).filter((d) => d && d !== "None" && d !== "General / Unassigned");
+
+  // Auto-selection of department on patient profile open
+  useEffect(() => {
+    const searchParams = new URLSearchParams(window.location.search);
+    const queryDept = searchParams.get("department");
+
+    if (queryDept && queryDept.trim() !== "" && queryDept !== "All" && queryDept !== "None") {
+      setSelectedDepartment(queryDept);
+      return;
+    }
+
+    // Identify patient's active departments from visits and appointments
+    const patientUsedDepts = Array.from(
+      new Set([
+        ...(visits.map((v) => v.department).filter(Boolean) as string[]),
+        ...(patientAppointments.map((a) => a.department).filter(Boolean) as string[]),
+      ])
+    ).filter((d) => d && d !== "None" && d !== "General / Unassigned");
+
+    if (patientUsedDepts.length === 1) {
+      setSelectedDepartment(patientUsedDepts[0]);
+    } else if (patient?.department && patient.department.trim() !== "" && patient.department !== "None") {
+      setSelectedDepartment(patient.department);
+    }
+  }, [patient, visits, patientAppointments]);
+
+  const handleDepartmentChange = (newDept: string) => {
+    if (form.formState.isDirty || editForm.formState.isDirty) {
+      setPendingDeptSwitch(newDept);
+      setIsUnsavedPromptOpen(true);
+    } else {
+      setSelectedDepartment(newDept);
+    }
+  };
 
   const patientBills = bills
     .filter((b) => b.patientId === patientId)
@@ -265,6 +318,7 @@ export default function PatientDetails() {
       complaints: "",
       diagnosis: "",
       prescription: "",
+      department: selectedDepartment !== "All" ? selectedDepartment : (patient?.department || "Hair"),
     },
   });
 
@@ -288,6 +342,7 @@ export default function PatientDetails() {
       complaints: "",
       diagnosis: "",
       prescription: "",
+      department: selectedDepartment !== "All" ? selectedDepartment : (patient?.department || "Hair"),
     },
   });
 
@@ -313,6 +368,7 @@ export default function PatientDetails() {
         complaints: "",
         diagnosis: "",
         prescription: "",
+        department: selectedDepartment !== "All" ? selectedDepartment : (patient?.department || allAvailableDepts[0] || "Hair"),
       });
     },
     onError: (error: Error) => {
@@ -397,6 +453,18 @@ export default function PatientDetails() {
     },
   });
 
+  const openAddVisitDialog = () => {
+    form.reset({
+      date: format(new Date(), "yyyy-MM-dd"),
+      complaints: "",
+      diagnosis: "",
+      prescription: "",
+      department: selectedDepartment !== "All" ? selectedDepartment : (patient?.department || allAvailableDepts[0] || "Hair"),
+    });
+    setAddVisitConsumed([]);
+    setIsDialogOpen(true);
+  };
+
   const openEditDialog = (visit: Visit) => {
     setEditingVisit(visit);
     editForm.reset({
@@ -404,6 +472,7 @@ export default function PatientDetails() {
       complaints: visit.complaints,
       diagnosis: visit.diagnosis,
       prescription: visit.prescription || "",
+      department: visit.department || patient?.department || allAvailableDepts[0] || "Hair",
     });
     setEditVisitConsumed(visit.consumedMedicines || []);
     setIsEditDialogOpen(true);
@@ -417,9 +486,21 @@ export default function PatientDetails() {
     }
   };
 
-  const sortedVisits = [...visits].sort(
+  const filteredVisits = visits.filter((visit) => {
+    if (selectedDepartment === "All") return true;
+    const vDept = visit.department || patient?.department || "General / Unassigned";
+    return vDept === selectedDepartment;
+  });
+
+  const sortedVisits = [...filteredVisits].sort(
     (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
   );
+
+  const filteredPatientAppointments = patientAppointments.filter((appt) => {
+    if (selectedDepartment === "All") return true;
+    const aDept = appt.department || patient?.department || "General / Unassigned";
+    return aDept === selectedDepartment;
+  });
 
   if (patientLoading || visitsLoading) {
     return (
@@ -679,6 +760,74 @@ export default function PatientDetails() {
         </div>
       </div>
 
+      {/* Unsaved Changes Warning Dialog for Department Switching */}
+      <AlertDialog open={isUnsavedPromptOpen} onOpenChange={setIsUnsavedPromptOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>You have unsaved changes</AlertDialogTitle>
+            <AlertDialogDescription>
+              You have entered data in the visit form that has not been saved yet. Do you want to save your changes or discard them before switching departments?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => {
+              setPendingDeptSwitch(null);
+              setIsUnsavedPromptOpen(false);
+            }}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                form.reset();
+                editForm.reset();
+                if (pendingDeptSwitch) {
+                  setSelectedDepartment(pendingDeptSwitch);
+                }
+                setPendingDeptSwitch(null);
+                setIsUnsavedPromptOpen(false);
+              }}
+            >
+              Discard & Switch
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Treatment Department / Category Selector Bar */}
+      <Card className="border border-border/80 bg-card shadow-sm">
+        <CardContent className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Stethoscope className="w-5 h-5 text-indigo-600" />
+            <span className="font-semibold text-sm">Treatment Department / Category:</span>
+          </div>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <Button
+              variant={selectedDepartment === "All" ? "default" : "outline"}
+              size="sm"
+              onClick={() => handleDepartmentChange("All")}
+              className={`h-8 text-xs font-medium ${selectedDepartment === "All" ? "bg-indigo-600 hover:bg-indigo-700 text-white" : ""}`}
+            >
+              All ({visits.length})
+            </Button>
+            {allAvailableDepts.map((deptName) => {
+              const vCount = visits.filter(v => (v.department || patient?.department || "General / Unassigned") === deptName).length;
+              return (
+                <Button
+                  key={deptName}
+                  variant={selectedDepartment === deptName ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => handleDepartmentChange(deptName)}
+                  className={`h-8 text-xs font-medium ${selectedDepartment === deptName ? "bg-indigo-600 hover:bg-indigo-700 text-white" : ""}`}
+                >
+                  {deptName} {vCount > 0 ? `(${vCount})` : ""}
+                </Button>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Two-column layout: Visit History left, Bill + CRM right */}
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
 
@@ -687,14 +836,14 @@ export default function PatientDetails() {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-4 pb-4">
           <div>
-            <CardTitle className="text-lg">Visit History</CardTitle>
+            <CardTitle className="text-lg">Visit History {selectedDepartment !== "All" && <span className="text-sm font-normal text-indigo-700">({selectedDepartment})</span>}</CardTitle>
             <p className="text-sm text-muted-foreground mt-1">
               {sortedVisits.length} visit{sortedVisits.length !== 1 ? "s" : ""} recorded
             </p>
           </div>
           <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
             <DialogTrigger asChild>
-              <Button data-testid="button-add-visit">
+              <Button data-testid="button-add-visit" onClick={openAddVisitDialog}>
                 <Plus className="w-4 h-4 mr-2" />
                 Add Visit
               </Button>
@@ -716,6 +865,30 @@ export default function PatientDetails() {
                         <FormLabel>Visit Date</FormLabel>
                         <FormControl>
                           <Input type="date" {...field} data-testid="input-visit-date" />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="department"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Treatment Department <span className="text-destructive">*</span></FormLabel>
+                        <FormControl>
+                          <select
+                            className="w-full h-10 border rounded-md px-3 bg-background text-sm"
+                            {...field}
+                          >
+                            <option value="">Select Department...</option>
+                            {allAvailableDepts.map((d) => (
+                              <option key={d} value={d}>
+                                {d}
+                              </option>
+                            ))}
+                          </select>
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -900,6 +1073,10 @@ export default function PatientDetails() {
                               sortedVisits.length - index === 3 ? "3rd" :
                                 `${sortedVisits.length - index}th`} Visit
                         </Badge>
+                        <Badge variant="outline" className="bg-indigo-50 text-indigo-700 border-indigo-200 flex items-center gap-1 text-xs font-normal">
+                          <Stethoscope className="w-3 h-3 text-indigo-600" />
+                          {visit.department || patient?.department || "General"}
+                        </Badge>
                       </div>
                       <Button
                         variant="ghost"
@@ -1018,6 +1195,30 @@ export default function PatientDetails() {
                       <FormLabel>Visit Date</FormLabel>
                       <FormControl>
                         <Input type="date" {...field} data-testid="input-edit-visit-date" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={editForm.control}
+                  name="department"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Treatment Department <span className="text-destructive">*</span></FormLabel>
+                      <FormControl>
+                        <select
+                          className="w-full h-10 border rounded-md px-3 bg-background text-sm"
+                          {...field}
+                        >
+                          <option value="">Select Department...</option>
+                          {allAvailableDepts.map((d) => (
+                            <option key={d} value={d}>
+                              {d}
+                            </option>
+                          ))}
+                        </select>
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -1236,21 +1437,21 @@ export default function PatientDetails() {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-4 pb-4">
           <div>
-            <CardTitle className="text-lg">Appointments History</CardTitle>
+            <CardTitle className="text-lg">Appointments History {selectedDepartment !== "All" && <span className="text-sm font-normal text-indigo-700">({selectedDepartment})</span>}</CardTitle>
             <p className="text-sm text-muted-foreground mt-1">
-              {patientAppointments.length} appointment{patientAppointments.length !== 1 ? "s" : ""} booked
+              {filteredPatientAppointments.length} appointment{filteredPatientAppointments.length !== 1 ? "s" : ""} booked
             </p>
           </div>
         </CardHeader>
         <CardContent>
-          {patientAppointments.length === 0 ? (
+          {filteredPatientAppointments.length === 0 ? (
             <div className="text-center py-8">
               <Calendar className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
               <p className="text-muted-foreground">No appointments booked yet</p>
             </div>
           ) : (
             <div className="space-y-4">
-              {patientAppointments.map((appt) => (
+              {filteredPatientAppointments.map((appt) => (
                 <div
                   key={appt.id}
                   className="flex items-center justify-between p-4 rounded-lg border bg-card hover-elevate"

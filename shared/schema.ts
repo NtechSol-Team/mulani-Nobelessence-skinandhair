@@ -70,6 +70,7 @@ export interface Visit {
   visitNumber: number;
   prescription?: string;
   consumedMedicines?: ConsumedMedicineItem[];
+  department?: string;
 }
 
 export const insertVisitSchema = z.object({
@@ -83,6 +84,7 @@ export const insertVisitSchema = z.object({
     medicineName: z.string(),
     quantity: z.number().min(1),
   })).optional().default([]),
+  department: z.string().optional().default(""),
 });
 
 export type InsertVisit = z.infer<typeof insertVisitSchema>;

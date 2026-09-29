@@ -224,6 +224,7 @@ type DbVisitRow = {
   visit_number: number;
   prescription?: string;
   consumed_medicines?: any;
+  department?: string;
 };
 
 type DbMedicineRow = {
@@ -305,6 +306,7 @@ const createTableStatements = [
     diagnosis TEXT NOT NULL,
     visit_number INTEGER NOT NULL,
     prescription TEXT DEFAULT '',
+    department TEXT DEFAULT '',
     created_at TIMESTAMPTZ DEFAULT NOW()
   )`,
   `CREATE INDEX IF NOT EXISTS visits_patient_idx ON visits(patient_id)`,
@@ -560,6 +562,9 @@ async function ensureTables(): Promise<void> {
 
   // Migration for new time column
   await pool.query("ALTER TABLE appointments ADD COLUMN IF NOT EXISTS time TEXT DEFAULT ''");
+
+  // Migration for Visit department
+  await pool.query("ALTER TABLE visits ADD COLUMN IF NOT EXISTS department TEXT DEFAULT ''");
 
   // Migration for Appointment type & department
   await pool.query("ALTER TABLE appointments ADD COLUMN IF NOT EXISTS type TEXT DEFAULT 'New'");
@@ -857,6 +862,7 @@ const mapVisit = (row: DbVisitRow): Visit => {
     visitNumber: row.visit_number,
     prescription: row.prescription || "",
     consumedMedicines: consumedMedicines as any[],
+    department: row.department || "",
   };
 };
 
@@ -1321,7 +1327,7 @@ export class PostgresStorage implements IStorage {
       return cached;
     }
     const { rows } = await pool.query<DbVisitRow>(
-      "SELECT id, patient_id, date, complaints, diagnosis, visit_number, prescription, consumed_medicines FROM visits ORDER BY date DESC, visit_number DESC"
+      "SELECT id, patient_id, date, complaints, diagnosis, visit_number, prescription, consumed_medicines, department FROM visits ORDER BY date DESC, visit_number DESC"
     );
     const visits = rows.map(mapVisit);
     this.cache.set("visits:all", visits);
@@ -1338,7 +1344,7 @@ export class PostgresStorage implements IStorage {
     }
     const dbPatientId = this.convertId("patients", patientId);
     const { rows } = await pool.query<DbVisitRow>(
-      "SELECT id, patient_id, date, complaints, diagnosis, visit_number, prescription, consumed_medicines FROM visits WHERE patient_id = $1 ORDER BY visit_number DESC",
+      "SELECT id, patient_id, date, complaints, diagnosis, visit_number, prescription, consumed_medicines, department FROM visits WHERE patient_id = $1 ORDER BY visit_number DESC",
       [dbPatientId]
     );
     const visits = rows.map(mapVisit);
@@ -1378,14 +1384,14 @@ export class PostgresStorage implements IStorage {
       const visitNumber = Number(visit_number ?? 1);
       const usesNumericVisitId = this.usesNumericId("visits");
       const insertQuery = usesNumericVisitId
-        ? `INSERT INTO visits(patient_id, date, complaints, diagnosis, visit_number, prescription, consumed_medicines)
-           VALUES($1, $2, $3, $4, $5, $6, $7)
-           RETURNING id, patient_id, date, complaints, diagnosis, visit_number, prescription, consumed_medicines`
-        : `INSERT INTO visits(id, patient_id, date, complaints, diagnosis, visit_number, prescription, consumed_medicines)
+        ? `INSERT INTO visits(patient_id, date, complaints, diagnosis, visit_number, prescription, consumed_medicines, department)
            VALUES($1, $2, $3, $4, $5, $6, $7, $8)
-           RETURNING id, patient_id, date, complaints, diagnosis, visit_number, prescription, consumed_medicines`;
+           RETURNING id, patient_id, date, complaints, diagnosis, visit_number, prescription, consumed_medicines, department`
+        : `INSERT INTO visits(id, patient_id, date, complaints, diagnosis, visit_number, prescription, consumed_medicines, department)
+           VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9)
+           RETURNING id, patient_id, date, complaints, diagnosis, visit_number, prescription, consumed_medicines, department`;
       const insertParams = usesNumericVisitId
-        ? [patientIdValue, insertVisit.date, insertVisit.complaints, insertVisit.diagnosis, visitNumber, insertVisit.prescription || "", JSON.stringify(consumedMedicines)]
+        ? [patientIdValue, insertVisit.date, insertVisit.complaints, insertVisit.diagnosis, visitNumber, insertVisit.prescription || "", JSON.stringify(consumedMedicines), insertVisit.department || ""]
         : [
           randomUUID(),
           patientIdValue,
@@ -1395,6 +1401,7 @@ export class PostgresStorage implements IStorage {
           visitNumber,
           insertVisit.prescription || "",
           JSON.stringify(consumedMedicines),
+          insertVisit.department || "",
         ];
 
       const { rows } = await client.query<DbVisitRow>(insertQuery, insertParams);
@@ -1463,10 +1470,11 @@ export class PostgresStorage implements IStorage {
               complaints = $3,
               diagnosis = $4,
               prescription = $5,
-              consumed_medicines = $6
+              consumed_medicines = $6,
+              department = $7
          WHERE id = $1
-         RETURNING id, patient_id, date, complaints, diagnosis, visit_number, prescription, consumed_medicines`,
-        [dbVisitId, insertVisit.date, insertVisit.complaints, insertVisit.diagnosis, insertVisit.prescription || "", JSON.stringify(newConsumed)]
+         RETURNING id, patient_id, date, complaints, diagnosis, visit_number, prescription, consumed_medicines, department`,
+        [dbVisitId, insertVisit.date, insertVisit.complaints, insertVisit.diagnosis, insertVisit.prescription || "", JSON.stringify(newConsumed), insertVisit.department || ""]
       );
       await client.query("COMMIT");
 
